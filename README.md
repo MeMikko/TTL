@@ -1,7 +1,8 @@
 # time2live.xyz
 
 Scheduling and liveness ("TTL") service for autonomous AI agents. See [docs/PLAN.md](docs/PLAN.md)
-for scope, architecture and phases. The full README (agent guide, MCP config, Hetzner deploy and
+for scope, architecture and phases, and [docs/OPERATIONS.md](docs/OPERATIONS.md) for the Hetzner
+deployment, backups, restore and monitoring runbook. The full README (agent guide, MCP config, Hetzner deploy and
 restore) arrives in the final phase.
 
 ## Local development

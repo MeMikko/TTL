@@ -75,6 +75,9 @@ const envSchema = z
       .regex(/^[A-Za-z0-9_-]{16,256}$/, 'must be 16-256 chars of A-Z a-z 0-9 _ -')
       .optional(),
     TELEGRAM_API_BASE: z.url().default('https://api.telegram.org'),
+
+    /** Dogfooding: the worker pings this heartbeat URL on every tick (see docs/OPERATIONS.md). */
+    SELF_HEARTBEAT_URL: z.url().optional(),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.TELEGRAM_BOT_TOKEN && (!cfg.TELEGRAM_BOT_USERNAME || !cfg.TELEGRAM_WEBHOOK_SECRET)) {

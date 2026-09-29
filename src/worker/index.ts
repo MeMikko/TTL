@@ -85,8 +85,22 @@ export function createWorker(deps: WorkerDeps): Worker {
   const inFlight = new Set<Promise<unknown>>();
   let lastCleanup = 0;
 
+  async function selfHeartbeat() {
+    if (!config.SELF_HEARTBEAT_URL) return;
+    try {
+      const res = await fetch(config.SELF_HEARTBEAT_URL, {
+        method: 'POST',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) logger.warn({ status: res.status }, 'self heartbeat rejected');
+    } catch (err) {
+      logger.warn({ err }, 'self heartbeat failed');
+    }
+  }
+
   async function tick() {
     await recordTick(db, workerId, startedAt);
+    await selfHeartbeat();
     if (Date.now() - lastCleanup >= CLEANUP_INTERVAL_MS) {
       lastCleanup = Date.now();
       const removed = await cleanupExpired(db);

@@ -1,8 +1,14 @@
 import 'dotenv/config';
 import { parseArgs } from 'node:util';
-import { findAccount, freezeAccount, unfreezeAccount } from '../core/accounts.js';
+import {
+  findAccount,
+  findOrCreateAccount,
+  freezeAccount,
+  unfreezeAccount,
+} from '../core/accounts.js';
 import { loadConfig, type Config } from '../core/config.js';
-import { createDatabase, type Db } from '../core/db/index.js';
+import { createDatabase, schema, type Db } from '../core/db/index.js';
+import { newId } from '../core/ids.js';
 import { createTelegramClient } from '../core/telegram.js';
 
 const USAGE = `Usage: admin <command> [options]
@@ -12,13 +18,23 @@ Commands:
   freeze   <accountId|address> --reason "<text>"  Freeze an account (API 403, jobs stop, no alerts)
   unfreeze <accountId|address>                    Unfreeze an account
   telegram-webhook                                 Register <PUBLIC_BASE_URL>/telegram/webhook with Telegram
+  create-monitor <address> --name <n> --ttl <s> [--grace <s>] [--telegram]
+                                                   Operator monitor (bypasses tier limits; creates
+                                                   the account if needed). Prints the ping URL.
 
 Production: docker compose exec api node dist/bin/admin.js freeze acc_… --reason "abuse"
 Local:      npm run admin -- freeze acc_… --reason "abuse"`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { reason: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
+  options: {
+    reason: { type: 'string' },
+    name: { type: 'string' },
+    ttl: { type: 'string' },
+    grace: { type: 'string', default: '60' },
+    telegram: { type: 'boolean', default: false },
+    help: { type: 'boolean', short: 'h' },
+  },
 });
 const [command, target] = positionals;
 const needsTarget = command !== 'telegram-webhook';
@@ -41,6 +57,28 @@ async function registerTelegramWebhook(config: Config) {
   }).setWebhook(url, TELEGRAM_WEBHOOK_SECRET);
   if (!res.ok) throw new Error(`setWebhook failed: ${res.error}`);
   console.log(`Telegram webhook set to ${url}`);
+}
+
+async function createOperatorMonitor(db: Db, config: Config, address: string) {
+  const ttl = Number(values.ttl);
+  const grace = Number(values.grace);
+  if (!values.name || !Number.isInteger(ttl) || ttl < 60 || !Number.isInteger(grace) || grace < 0) {
+    throw new Error('--name and --ttl (>= 60) are required; --grace must be >= 0');
+  }
+  const { account } = await findOrCreateAccount(db, address);
+  const [monitor] = await db
+    .insert(schema.monitors)
+    .values({
+      id: newId('mon'),
+      accountId: account.id,
+      name: values.name,
+      ttlSeconds: ttl,
+      graceSeconds: grace,
+      alertTelegram: values.telegram,
+    })
+    .returning();
+  console.log(`Monitor ${monitor!.id} for ${account.id}`);
+  console.log(`Ping URL: ${config.PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/heartbeat/${monitor!.id}`);
 }
 
 async function accountCommand(db: Db, cmd: string, idOrAddress: string) {
@@ -72,6 +110,7 @@ const database = createDatabase(config.DATABASE_URL, 1);
 
 try {
   if (command === 'telegram-webhook') await registerTelegramWebhook(config);
+  else if (command === 'create-monitor') await createOperatorMonitor(database.db, config, target!);
   else await accountCommand(database.db, command!, target!);
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);

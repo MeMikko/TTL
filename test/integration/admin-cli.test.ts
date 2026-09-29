@@ -13,7 +13,12 @@ beforeEach(() => resetDb(database));
 
 const admin = (...args: string[]) =>
   run('npx', ['tsx', 'src/bin/admin.ts', ...args], {
-    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, ENCRYPTION_KEY: TEST_ENCRYPTION_KEY },
+    env: {
+      ...process.env,
+      DATABASE_URL: TEST_DATABASE_URL,
+      ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
+      PUBLIC_BASE_URL: 'http://localhost:3000',
+    },
   });
 
 describe('admin CLI', () => {
@@ -41,4 +46,28 @@ describe('admin CLI', () => {
       stderr: expect.stringContaining('No account found'),
     });
   }, 30_000);
+});
+
+describe('admin create-monitor', () => {
+  it('creates an operator monitor beyond the tier limit and prints the ping URL', async () => {
+    const wallet = newWallet();
+    for (const name of ['worker', 'backup']) {
+      const out = await admin('create-monitor', wallet.address, '--name', name, '--ttl', '120');
+      expect(out.stdout).toMatch(
+        /Ping URL: http:\/\/localhost:3000\/v1\/heartbeat\/mon_[0-9A-Za-z]{22}/,
+      );
+    }
+    const { rows } = await database.pool.query(
+      'select name, ttl_seconds, grace_seconds from monitors order by name',
+    );
+    expect(rows).toEqual([
+      { name: 'backup', ttl_seconds: 120, grace_seconds: 60 },
+      { name: 'worker', ttl_seconds: 120, grace_seconds: 60 },
+    ]);
+    await expect(
+      admin('create-monitor', wallet.address, '--name', 'x', '--ttl', '5'),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining('--ttl'),
+    });
+  }, 60_000);
 });

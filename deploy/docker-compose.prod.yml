@@ -1,0 +1,110 @@
+# Production stack. Lives on the server as /opt/time2live/docker-compose.yml next to .env.
+# Only Caddy publishes ports (80/443). Postgres has no `ports:` at all, so it is unreachable from
+# outside even though Docker-published ports would bypass ufw.
+name: time2live
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+x-app: &app
+  image: ${IMAGE:-ghcr.io/memikko/ttl}:${IMAGE_TAG:?IMAGE_TAG must be set (remote-deploy.sh writes it to .env)}
+  env_file: .env
+  environment:
+    NODE_ENV: production
+    TRUST_PROXY: 'true'
+    DATABASE_URL: postgres://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:?}
+  logging: *logging
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ['no-new-privileges:true']
+  cap_drop: [ALL]
+  networks: [backend]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    shm_size: 256m
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    networks: [backend]
+
+  # One-off: `docker compose run --rm migrate` (remote-deploy.sh runs it before each release).
+  migrate:
+    <<: *app
+    command: ['node', 'dist/bin/migrate.js']
+    restart: 'no'
+    profiles: [tools]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ['node', 'dist/bin/api.js']
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks: [backend, edge]
+
+  worker:
+    <<: *app
+    command: ['node', 'dist/bin/worker.js']
+    restart: unless-stopped
+    stop_grace_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *logging
+    networks: [edge]
+
+networks:
+  backend: {}
+  edge: {}
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}
