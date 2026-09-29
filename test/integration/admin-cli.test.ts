@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { findAccount, findOrCreateAccount } from '../../src/core/accounts.js';
-import { testDatabase } from '../helpers/app.js';
+import { TEST_ENCRYPTION_KEY, testDatabase } from '../helpers/app.js';
 import { newWallet, resetDb } from '../helpers/auth.js';
 import { TEST_DATABASE_URL } from '../helpers/env.js';
 
@@ -13,7 +13,7 @@ beforeEach(() => resetDb(database));
 
 const admin = (...args: string[]) =>
   run('npx', ['tsx', 'src/bin/admin.ts', ...args], {
-    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
+    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, ENCRYPTION_KEY: TEST_ENCRYPTION_KEY },
   });
 
 describe('admin CLI', () => {

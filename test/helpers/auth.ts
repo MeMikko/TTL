@@ -43,6 +43,6 @@ export const bearer = (key: string, extra: Record<string, string> = {}) => ({
 
 export async function resetDb(database: Database) {
   await database.pool.query(
-    'TRUNCATE accounts, auth_nonces, api_keys, idempotency_keys, worker_ticks CASCADE',
+    'TRUNCATE accounts, auth_nonces, api_keys, idempotency_keys, worker_ticks, jobs, job_runs, job_attempts, usage_counters CASCADE',
   );
 }

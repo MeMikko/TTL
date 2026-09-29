@@ -40,6 +40,48 @@ Challenges are single-use and expire after 5 minutes. EOA signatures are verifie
 smart-contract wallets (ERC-1271/6492) require `BASE_RPC_URL` / `BASE_SEPOLIA_RPC_URL`.
 The OpenAPI document is served at `/openapi.json`.
 
+## Scheduled jobs
+
+```sh
+curl -X POST http://localhost:3000/v1/jobs -H "Authorization: Bearer $T2L_KEY" \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: wake-1' -d '{
+    "name": "wake agent",
+    "schedule": { "type": "cron", "expression": "*/15 * * * *", "timezone": "Europe/Helsinki" },
+    "target": { "url": "https://agent.example.com/wake", "method": "POST",
+                "headers": { "Authorization": "Bearer my-agent-token" }, "body": { "task": "wake" } },
+    "timeoutMs": 10000, "maxAttempts": 5 }'
+```
+
+- Schedules: 5-field cron (+ `@hourly`/`@daily`/…, minimum interval 1 min) with an IANA
+  timezone, or `{"type":"once","at":"<ISO time>"}`.
+- Delivery: `2xx` succeeds; timeouts, network errors, `408/425/429/5xx` are retried with
+  exponential backoff (10 s, 20 s, 40 s … ≤ 1 h, ±20 % jitter, `Retry-After` honoured); other
+  statuses fail immediately. Every attempt is logged (`GET /v1/runs/{id}`); history is kept 30 days.
+- Targets: `https` on ports 443/8443 only. Private, loopback, link-local (incl.
+  `169.254.169.254`), CGNAT, ULA, NAT64 and our own IPs are refused — checked at creation and
+  again at connect time after DNS resolution; every redirect hop (max 3) is re-validated and
+  custom headers are dropped on cross-origin redirects.
+- Header values are stored encrypted and never returned.
+
+### Verifying deliveries
+
+Each request carries `T2L-Signature: t=<unix>,v1=<hex>`, `T2L-Delivery-Id` (stable across
+retries — use it to deduplicate), `T2L-Attempt`, `T2L-Event`, `T2L-Job-Id` and
+`T2L-Scheduled-For`. Get your secret from `GET /v1/account/webhook-secret`.
+
+```js
+import crypto from 'node:crypto';
+
+function verify(secret, rawBody, header, toleranceSec = 300) {
+  const parts = Object.fromEntries(header.split(',').map((p) => p.split('=')));
+  const t = Number(parts.t);
+  if (!t || Math.abs(Date.now() / 1000 - t) > toleranceSec) return false;
+  const expected = crypto.createHmac('sha256', secret).update(`${t}.${rawBody}`).digest();
+  const given = Buffer.from(parts.v1 ?? '', 'hex');
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+```
+
 ## Admin
 
 ```sh
@@ -49,7 +91,8 @@ npm run admin -- unfreeze <accountId|address>
 # production: docker compose exec api node dist/bin/admin.js …
 ```
 
-A frozen account gets `403 account_frozen` on every API call and cannot obtain new keys.
+A frozen account gets `403 account_frozen` on every API call and cannot obtain new keys; its
+jobs stop producing runs and pending deliveries are cancelled.
 
 `GET /healthz` checks the process only; `GET /healthz?deep=1` also checks Postgres and that a
 worker ticked within `HEALTH_MAX_TICK_AGE_MS` (503 otherwise) — point external uptime checks there.

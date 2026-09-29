@@ -14,6 +14,7 @@ import { createRouter } from './router.js';
 import { accountRoutes } from './routes/account.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
+import { jobRoutes } from './routes/jobs.js';
 import { keyRoutes } from './routes/keys.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -57,15 +58,16 @@ export function createApp(deps: AppDeps) {
 
   const auth = requireAuth(deps, limiters.key);
   // Note: in Hono '/x/*' also matches '/x' itself, so list each prefix once.
-  for (const path of ['/v1/keys/*', '/v1/account/*']) {
+  for (const path of ['/v1/keys/*', '/v1/account/*', '/v1/jobs/*', '/v1/runs/*']) {
     app.use(path, auth);
   }
-  app.on('POST', ['/v1/keys'], idempotency(deps));
+  app.on('POST', ['/v1/keys', '/v1/jobs', '/v1/jobs/:id/trigger'], idempotency(deps));
 
   app.route('/', healthRoutes(deps));
   app.route('/', authRoutes(deps));
   app.route('/', keyRoutes(deps));
   app.route('/', accountRoutes(deps));
+  app.route('/', jobRoutes(deps));
 
   app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
     type: 'http',

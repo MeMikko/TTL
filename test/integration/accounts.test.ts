@@ -71,7 +71,7 @@ describe('cleanupExpired', () => {
     await idem('old', new Date(now.getTime() - 25 * 3600_000));
     await idem('fresh', new Date(now.getTime() - 3600_000));
 
-    expect(await cleanupExpired(db, now)).toEqual({ nonces: 1, idempotencyKeys: 1 });
+    expect(await cleanupExpired(db, now)).toEqual({ nonces: 1, idempotencyKeys: 1, jobRuns: 0 });
     const left = await q(
       `select (select array_agg(nonce) from auth_nonces) n, (select array_agg(key) from idempotency_keys) k`,
       [],

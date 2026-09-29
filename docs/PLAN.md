@@ -4,7 +4,7 @@ Scheduling and liveness ("TTL") service for autonomous AI agents. Customers are 
 agent builders and the agents themselves: an agent must be able to discover the service,
 register and pay without a human in the loop.
 
-Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅. This document is the source of truth for
+Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅. This document is the source of truth for
 scope; update it when decisions change.
 
 ---
@@ -22,7 +22,10 @@ Internet ──443──> Caddy (TLS) ──> api (Hono)  ──┐
   Never performs outbound webhook calls.
 - **worker** —
   - scheduler loop: claims due jobs (`SELECT … FOR UPDATE SKIP LOCKED`), computes `next_run_at`;
-  - delivery: webhook calls through pg-boss queues (retry + exponential backoff);
+  - delivery: webhook calls queued in the `job_runs` table itself (claimed with
+    `FOR UPDATE SKIP LOCKED` + a lease; retry with exponential backoff). Decision (phase 2):
+    no pg-boss — run history and queue are the same rows, so they can never disagree, and
+    scheduling (quota + run insert + next_run_at) is a single transaction;
   - monitor sweeper: finds expired heartbeats via indexed `expires_at`, alive → dead, sends alerts;
   - retention cleanup (30 days, see §11);
   - keeper (phase 7).
