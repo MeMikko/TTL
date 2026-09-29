@@ -62,8 +62,28 @@ const envSchema = z
     DELIVERY_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(20),
     SCHEDULER_POLL_MS: z.coerce.number().int().min(100).default(1000),
     MAX_JOBS_PER_ACCOUNT: z.coerce.number().int().min(1).default(100),
+
+    /** Pings per monitor per minute (pings are unauthenticated; the id is the capability). */
+    RATE_LIMIT_PING_PER_MIN: z.coerce.number().int().min(1).default(60),
+
+    /** Telegram alerts are enabled when the bot token is set. */
+    TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+    TELEGRAM_BOT_USERNAME: z.string().min(1).optional(),
+    /** Shared secret Telegram echoes in X-Telegram-Bot-Api-Secret-Token on webhook calls. */
+    TELEGRAM_WEBHOOK_SECRET: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{16,256}$/, 'must be 16-256 chars of A-Z a-z 0-9 _ -')
+      .optional(),
+    TELEGRAM_API_BASE: z.url().default('https://api.telegram.org'),
   })
   .superRefine((cfg, ctx) => {
+    if (cfg.TELEGRAM_BOT_TOKEN && (!cfg.TELEGRAM_BOT_USERNAME || !cfg.TELEGRAM_WEBHOOK_SECRET)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['TELEGRAM_BOT_TOKEN'],
+        message: 'TELEGRAM_BOT_USERNAME and TELEGRAM_WEBHOOK_SECRET are required with a bot token',
+      });
+    }
     if (cfg.NODE_ENV === 'production' && cfg.WEBHOOK_DEV_ALLOW_LOCAL) {
       ctx.addIssue({
         code: 'custom',

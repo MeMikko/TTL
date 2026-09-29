@@ -31,6 +31,7 @@ export function buildApp(
     config?: Config;
     smartWalletVerifier?: SmartWalletVerifier;
     dnsResolve?: AppDeps['dnsResolve'];
+    telegram?: AppDeps['telegram'];
   } = {},
 ) {
   return createApp({
@@ -40,5 +41,6 @@ export function buildApp(
     now: opts.now,
     smartWalletVerifier: opts.smartWalletVerifier,
     dnsResolve: opts.dnsResolve,
+    telegram: opts.telegram,
   });
 }

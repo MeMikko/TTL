@@ -4,6 +4,9 @@ import { parseEncryptionKey } from '../core/crypto.js';
 import type { Database } from '../core/db/index.js';
 import type { Logger } from '../core/logger.js';
 import { RateLimiter } from '../core/rate-limit.js';
+import { sweepExpiredMonitors } from '../core/monitors.js';
+import { createTelegramClient, type TelegramClient } from '../core/telegram.js';
+import { claimAlerts, processAlert, type AlertDeps } from './alerts.js';
 import { cleanupExpired } from './cleanup.js';
 import { claimRuns, processRun, type DeliveryDeps } from './delivery.js';
 import { createHttpClient, type HttpClient } from './http-client.js';
@@ -19,6 +22,7 @@ export interface WorkerDeps {
   workerId?: string;
   /** Override the outbound client (tests). */
   httpClient?: HttpClient;
+  telegram?: TelegramClient;
 }
 
 export interface Worker {
@@ -26,7 +30,7 @@ export interface Worker {
   stop(): Promise<void>;
   /** One liveness tick + cleanup (exposed for tests). */
   tick(): Promise<void>;
-  /** One scheduler pass + one delivery pass, awaiting all deliveries (exposed for tests). */
+  /** One scheduler, monitor and delivery pass, awaiting all deliveries (exposed for tests). */
   runOnce(): Promise<void>;
 }
 
@@ -69,6 +73,15 @@ export function createWorker(deps: WorkerDeps): Worker {
     hostLimiter: RateLimiter.perMinute(config.TARGET_HOST_RATE_PER_MIN),
     logger,
   };
+  const telegram =
+    deps.telegram ??
+    (config.TELEGRAM_BOT_TOKEN
+      ? createTelegramClient({
+          token: config.TELEGRAM_BOT_TOKEN,
+          apiBase: config.TELEGRAM_API_BASE,
+        })
+      : undefined);
+  const alertDeps: AlertDeps = { ...deliveryDeps, telegram };
   const inFlight = new Set<Promise<unknown>>();
   let lastCleanup = 0;
 
@@ -90,20 +103,33 @@ export function createWorker(deps: WorkerDeps): Worker {
     }
   }
 
-  async function deliveryPass() {
-    const free = config.DELIVERY_CONCURRENCY - inFlight.size;
-    const runs = await claimRuns(db, free, new Date());
-    for (const run of runs) {
-      const p = processRun(deliveryDeps, run)
-        .catch((err: unknown) => logger.error({ err, runId: run.id }, 'delivery failed'))
-        .finally(() => inFlight.delete(p));
-      inFlight.add(p);
+  async function monitorPass() {
+    for (let i = 0; i < 10; i++) {
+      const r = await sweepExpiredMonitors(db, new Date());
+      if (r.died) logger.info(r, 'monitors marked dead');
+      if (r.died < 100) break;
     }
+  }
+
+  function track(p: Promise<unknown>, what: string, id: string) {
+    const tracked = p
+      .catch((err: unknown) => logger.error({ err, id }, `${what} failed`))
+      .finally(() => inFlight.delete(tracked));
+    inFlight.add(tracked);
+  }
+
+  async function deliveryPass() {
+    // Alerts first: a dead-agent notification is more urgent than a routine job run.
+    const alerts = await claimAlerts(db, config.DELIVERY_CONCURRENCY - inFlight.size, new Date());
+    for (const a of alerts) track(processAlert(alertDeps, a), 'alert delivery', a.id);
+    const runs = await claimRuns(db, config.DELIVERY_CONCURRENCY - inFlight.size, new Date());
+    for (const run of runs) track(processRun(deliveryDeps, run), 'job delivery', run.id);
   }
 
   const loops = [
     loop('tick', config.WORKER_TICK_INTERVAL_MS, tick, logger),
     loop('scheduler', config.SCHEDULER_POLL_MS, schedulePass, logger),
+    loop('monitors', config.SCHEDULER_POLL_MS, monitorPass, logger),
     loop('delivery', config.SCHEDULER_POLL_MS, deliveryPass, logger),
   ];
 
@@ -111,6 +137,7 @@ export function createWorker(deps: WorkerDeps): Worker {
     tick,
     async runOnce() {
       await schedulePass();
+      await monitorPass();
       await deliveryPass();
       await Promise.all(inFlight);
     },

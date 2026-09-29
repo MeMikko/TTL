@@ -16,6 +16,8 @@ import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { jobRoutes } from './routes/jobs.js';
 import { keyRoutes } from './routes/keys.js';
+import { monitorRoutes } from './routes/monitors.js';
+import { telegramAccountRoutes, telegramWebhookRoutes } from './routes/telegram.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -58,16 +60,30 @@ export function createApp(deps: AppDeps) {
 
   const auth = requireAuth(deps, limiters.key);
   // Note: in Hono '/x/*' also matches '/x' itself, so list each prefix once.
-  for (const path of ['/v1/keys/*', '/v1/account/*', '/v1/jobs/*', '/v1/runs/*']) {
+  for (const path of [
+    '/v1/keys/*',
+    '/v1/account/*',
+    '/v1/jobs/*',
+    '/v1/runs/*',
+    '/v1/monitors/*',
+  ]) {
     app.use(path, auth);
   }
-  app.on('POST', ['/v1/keys', '/v1/jobs', '/v1/jobs/:id/trigger'], idempotency(deps));
+  app.on(
+    'POST',
+    ['/v1/keys', '/v1/jobs', '/v1/jobs/:id/trigger', '/v1/monitors'],
+    idempotency(deps),
+  );
+  app.use('/telegram/*', bodyLimit({ maxSize: MAX_BODY_BYTES }));
 
   app.route('/', healthRoutes(deps));
   app.route('/', authRoutes(deps));
   app.route('/', keyRoutes(deps));
   app.route('/', accountRoutes(deps));
   app.route('/', jobRoutes(deps));
+  app.route('/', monitorRoutes(deps));
+  app.route('/', telegramAccountRoutes(deps));
+  app.route('/', telegramWebhookRoutes(deps));
 
   app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
     type: 'http',

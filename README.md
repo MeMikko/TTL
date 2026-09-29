@@ -82,17 +82,43 @@ function verify(secret, rawBody, header, toleranceSec = 300) {
 }
 ```
 
+## Heartbeat monitors (dead man's switch)
+
+```sh
+# create (the response contains pingUrl)
+curl -X POST http://localhost:3000/v1/monitors -H "Authorization: Bearer $T2L_KEY" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "agent-7", "ttlSeconds": 300, "graceSeconds": 60,
+    "alerts": { "webhookUrl": "https://ops.example.com/t2l-alerts", "telegram": true } }'
+
+# ping from the agent (no API key; the unguessable id is the credential)
+curl -fsS -X POST http://localhost:3000/v1/heartbeat/mon_…
+```
+
+- States: `new` (never pinged, never alerts) → `alive` → `dead` when no ping arrives within
+  `ttlSeconds + graceSeconds` → `alive` again on the next ping. `paused` suppresses alerts;
+  resuming starts a fresh window.
+- Alerts: `monitor.down` and `monitor.up` (recovery), as a signed webhook (same `T2L-Signature`
+  scheme as jobs, JSON body with the monitor snapshot) and/or a Telegram message. Retried with
+  backoff (6 attempts). Transitions are listed at `GET /v1/monitors/{id}/events` (30 days).
+- Telegram: `POST /v1/account/telegram/link` returns a `t.me` deep link; press Start in
+  Telegram to link the chat, send `/stop` to unlink. Operators must set `TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` and run `admin telegram-webhook` once.
+- Tiers: 1 monitor before activation, 3 after (`402 quota_exceeded` beyond that).
+
 ## Admin
 
 ```sh
 npm run admin -- show <accountId|address>
 npm run admin -- freeze <accountId|address> --reason "abuse report"
 npm run admin -- unfreeze <accountId|address>
+npm run admin -- telegram-webhook   # register <PUBLIC_BASE_URL>/telegram/webhook with Telegram
 # production: docker compose exec api node dist/bin/admin.js …
 ```
 
 A frozen account gets `403 account_frozen` on every API call and cannot obtain new keys; its
-jobs stop producing runs and pending deliveries are cancelled.
+jobs stop producing runs and pending deliveries are cancelled. Its pings are still accepted,
+but no alerts are sent.
 
 `GET /healthz` checks the process only; `GET /healthz?deep=1` also checks Postgres and that a
 worker ticked within `HEALTH_MAX_TICK_AGE_MS` (503 otherwise) — point external uptime checks there.

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   index,
   integer,
@@ -34,6 +35,8 @@ export const accounts = pgTable(
     frozenAt: ts('frozen_at'),
     /** AES-GCM encrypted HMAC secret for signing webhook deliveries (created lazily). */
     webhookSecretEnc: text('webhook_secret_enc'),
+    /** Telegram chat linked via the bot's /start deep link; receives monitor alerts. */
+    telegramChatId: text('telegram_chat_id'),
     /** Set when the one-off free-tier activation payment settles (phase 4). */
     activatedAt: ts('activated_at'),
     createdAt: ts('created_at').notNull().defaultNow(),
@@ -234,7 +237,111 @@ export const usageCounters = pgTable(
   (t) => [primaryKey({ columns: [t.accountId, t.period] })],
 );
 
+export const MONITOR_STATUSES = ['new', 'alive', 'dead', 'paused'] as const;
+export type MonitorStatus = (typeof MONITOR_STATUSES)[number];
+
+export const monitors = pgTable(
+  'monitors',
+  {
+    /** Random 131-bit id; knowing it is what authorises a ping (like healthchecks.io). */
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    ttlSeconds: integer('ttl_seconds').notNull(),
+    graceSeconds: integer('grace_seconds').notNull(),
+    status: text('status', { enum: MONITOR_STATUSES }).notNull().default('new'),
+    lastPingAt: ts('last_ping_at'),
+    /** last ping + ttl + grace while alive; null otherwise. */
+    expiresAt: ts('expires_at'),
+    deadSince: ts('dead_since'),
+    alertWebhookUrl: text('alert_webhook_url'),
+    alertTelegram: boolean('alert_telegram').notNull().default(false),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('monitors_expiry_idx')
+      .on(t.expiresAt)
+      .where(sql`${t.status} = 'alive'`),
+    index('monitors_account_idx').on(t.accountId, t.createdAt),
+    check('monitors_status_check', sql`${t.status} in ('new', 'alive', 'dead', 'paused')`),
+  ],
+);
+
+export const monitorEvents = pgTable(
+  'monitor_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    monitorId: text('monitor_id')
+      .notNull()
+      .references(() => monitors.id, { onDelete: 'cascade' }),
+    fromStatus: text('from_status').notNull(),
+    toStatus: text('to_status').notNull(),
+    /** ping | timeout | pause | resume */
+    reason: text('reason').notNull(),
+    at: ts('at').notNull(),
+  },
+  (t) => [
+    index('monitor_events_monitor_idx').on(t.monitorId, t.at),
+    index('monitor_events_at_idx').on(t.at),
+  ],
+);
+
+export const ALERT_STATUSES = ['pending', 'running', 'succeeded', 'failed', 'cancelled'] as const;
+
+/** Outgoing alert notifications; a queue with the same lease semantics as job_runs. */
+export const alertDeliveries = pgTable(
+  'alert_deliveries',
+  {
+    id: text('id').primaryKey(),
+    monitorId: text('monitor_id')
+      .notNull()
+      .references(() => monitors.id, { onDelete: 'cascade' }),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    event: text('event', { enum: ['monitor.down', 'monitor.up'] }).notNull(),
+    channel: text('channel', { enum: ['webhook', 'telegram'] }).notNull(),
+    /** Snapshot of what is being reported (JSON). */
+    payload: text('payload').notNull(),
+    status: text('status', { enum: ALERT_STATUSES }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull(),
+    nextAttemptAt: ts('next_attempt_at'),
+    lockedUntil: ts('locked_until'),
+    lastHttpStatus: integer('last_http_status'),
+    lastError: text('last_error'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [
+    index('alert_deliveries_pending_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`${t.status} = 'pending'`),
+    index('alert_deliveries_running_idx')
+      .on(t.lockedUntil)
+      .where(sql`${t.status} = 'running'`),
+    index('alert_deliveries_monitor_idx').on(t.monitorId, t.createdAt),
+    index('alert_deliveries_created_at_idx').on(t.createdAt),
+  ],
+);
+
+/** One-time tokens for linking a Telegram chat to an account (bot deep link /start <token>). */
+export const telegramLinkTokens = pgTable('telegram_link_tokens', {
+  token: text('token').primaryKey(),
+  accountId: text('account_id')
+    .notNull()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  expiresAt: ts('expires_at').notNull(),
+  usedAt: ts('used_at'),
+});
+
 export type Account = typeof accounts.$inferSelect;
+export type Monitor = typeof monitors.$inferSelect;
+export type MonitorEvent = typeof monitorEvents.$inferSelect;
+export type AlertDelivery = typeof alertDeliveries.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type JobAttempt = typeof jobAttempts.$inferSelect;

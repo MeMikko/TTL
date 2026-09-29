@@ -7,12 +7,8 @@ import { ApiError } from './errors.js';
 import { newId } from './ids.js';
 import { TIERS, tierFor } from './plans.js';
 import { assertCron, nextCronRun, normalizeCron, ScheduleError } from './schedule.js';
-import {
-  assertResolvesToPublic,
-  BlockedTargetError,
-  validateTargetUrl,
-  type TargetPolicy,
-} from './ssrf.js';
+import type { TargetPolicy } from './ssrf.js';
+import { assertWebhookUrl, type Resolve } from './targets.js';
 import { tryConsumeRun } from './usage.js';
 
 export type HttpMethod = (typeof schema.HTTP_METHODS)[number];
@@ -49,7 +45,7 @@ export interface JobsDeps {
   policy: TargetPolicy;
   maxJobsPerAccount: number;
   /** DNS resolution override for tests. */
-  resolve?: Parameters<typeof assertResolvesToPublic>[2];
+  resolve?: Resolve;
 }
 
 const MAX_ONCE_AHEAD_MS = 366 * 24 * 3600_000;
@@ -93,19 +89,7 @@ async function checkTarget(deps: JobsDeps, target: TargetInput): Promise<string>
   if (target.body !== null && target.method === 'GET') {
     throw new ApiError(400, 'invalid_target', 'GET requests cannot have a body');
   }
-  try {
-    const url = validateTargetUrl(target.url, deps.policy);
-    // Early feedback only; the authoritative check happens at connect time on every delivery.
-    await assertResolvesToPublic(url.hostname, deps.policy, deps.resolve);
-    return url.toString();
-  } catch (err) {
-    if (err instanceof BlockedTargetError) throw new ApiError(400, 'invalid_target', err.message);
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'ENODATA') {
-      throw new ApiError(400, 'invalid_target', `target host does not resolve (${code})`);
-    }
-    throw err;
-  }
+  return assertWebhookUrl(deps.policy, target.url, deps.resolve);
 }
 
 function scheduleColumns(schedule: ScheduleInput) {

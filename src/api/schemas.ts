@@ -226,3 +226,87 @@ export const PageQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().max(200).optional(),
 });
+
+// ---- Monitors -------------------------------------------------------------------------------
+
+export const AlertsSchema = z
+  .object({
+    webhookUrl: z.string().max(2048).nullable().default(null).openapi({
+      description: 'Signed POST on monitor.down / monitor.up (same signature scheme as jobs).',
+      example: 'https://ops.example.com/t2l-alerts',
+    }),
+    telegram: z.boolean().default(false).openapi({
+      description: 'Send alerts to the Telegram chat linked via POST /v1/account/telegram/link.',
+    }),
+  })
+  .openapi('Alerts');
+
+export const CreateMonitorSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    ttlSeconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(30 * 24 * 3600)
+      .openapi({
+        description: 'Expected maximum time between pings.',
+        example: 300,
+      }),
+    graceSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(7 * 24 * 3600)
+      .default(60),
+    alerts: AlertsSchema.default({ webhookUrl: null, telegram: false }),
+  })
+  .openapi('CreateMonitor');
+
+export const UpdateMonitorSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    ttlSeconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(30 * 24 * 3600),
+    graceSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(7 * 24 * 3600),
+    alerts: z
+      .object({ webhookUrl: z.string().max(2048).nullable(), telegram: z.boolean() })
+      .partial(),
+  })
+  .partial()
+  .openapi('UpdateMonitor');
+
+export const MonitorSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    status: z.enum(['new', 'alive', 'dead', 'paused']).openapi({
+      description: 'new = never pinged; alive; dead = TTL + grace exceeded; paused.',
+    }),
+    ttlSeconds: z.number().int(),
+    graceSeconds: z.number().int(),
+    pingUrl: z.string().openapi({ description: 'POST here to report liveness (no auth needed).' }),
+    lastPingAt: z.iso.datetime().nullable(),
+    expiresAt: z.iso.datetime().nullable(),
+    deadSince: z.iso.datetime().nullable(),
+    alerts: z.object({ webhookUrl: z.string().nullable(), telegram: z.boolean() }),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .openapi('Monitor');
+
+export const MonitorEventSchema = z
+  .object({
+    from: z.string(),
+    to: z.string(),
+    reason: z.enum(['ping', 'timeout', 'pause', 'resume']),
+    at: z.iso.datetime(),
+  })
+  .openapi('MonitorEvent');

@@ -1,4 +1,4 @@
-import type { ApiKey, Job, JobAttempt, JobRun } from '../core/db/schema.js';
+import type { ApiKey, Job, JobAttempt, JobRun, Monitor, MonitorEvent } from '../core/db/schema.js';
 
 export function serializeApiKey(k: ApiKey) {
   return {
@@ -80,4 +80,30 @@ export function decodeCursor(cursor: string): { createdAt: Date; id: string } | 
   const createdAt = new Date(ts ?? '');
   if (!id || Number.isNaN(createdAt.getTime())) return null;
   return { createdAt, id };
+}
+
+export function serializeMonitor(m: Monitor, publicBaseUrl: string) {
+  return {
+    id: m.id,
+    name: m.name,
+    status: m.status,
+    ttlSeconds: m.ttlSeconds,
+    graceSeconds: m.graceSeconds,
+    pingUrl: `${publicBaseUrl.replace(/\/$/, '')}/v1/heartbeat/${m.id}`,
+    lastPingAt: iso(m.lastPingAt),
+    expiresAt: iso(m.expiresAt),
+    deadSince: iso(m.deadSince),
+    alerts: { webhookUrl: m.alertWebhookUrl, telegram: m.alertTelegram },
+    createdAt: m.createdAt.toISOString(),
+    updatedAt: m.updatedAt.toISOString(),
+  };
+}
+
+export function serializeMonitorEvent(e: MonitorEvent) {
+  return {
+    from: e.fromStatus,
+    to: e.toStatus,
+    reason: e.reason as 'ping' | 'timeout' | 'pause' | 'resume',
+    at: e.at.toISOString(),
+  };
 }

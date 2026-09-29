@@ -30,6 +30,7 @@ const getAccountRoute = createRoute({
               activatedAt: z.iso.datetime().nullable(),
               tier: z.object({ name: z.enum(['unactivated', 'free']), limits: LimitsSchema }),
               usage: z.object({ period: z.string(), runs: z.number().int() }),
+              telegram: z.object({ linked: z.boolean() }),
             })
             .openapi('Account'),
         },
@@ -112,6 +113,7 @@ export function accountRoutes(deps: AppDeps) {
         activatedAt: a.activatedAt?.toISOString() ?? null,
         tier: { name: tier, limits: { ...TIERS[tier] } },
         usage: { period: periodOf(t), runs: await runsUsed(db, a.id, t) },
+        telegram: { linked: a.telegramChatId !== null },
       },
       200,
     );
