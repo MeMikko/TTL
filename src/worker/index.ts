@@ -2,7 +2,10 @@ import { hostname } from 'node:os';
 import type { Config } from '../core/config.js';
 import type { Database } from '../core/db/index.js';
 import type { Logger } from '../core/logger.js';
+import { cleanupExpired } from './cleanup.js';
 import { recordTick } from './ticker.js';
+
+const CLEANUP_INTERVAL_MS = 10 * 60_000;
 
 export interface WorkerDeps {
   config: Config;
@@ -24,9 +27,17 @@ export function createWorker(deps: WorkerDeps): Worker {
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> | undefined;
   let stopped = false;
+  let lastCleanup = 0;
 
   async function tick() {
     await recordTick(deps.database.db, workerId, startedAt);
+    if (Date.now() - lastCleanup >= CLEANUP_INTERVAL_MS) {
+      lastCleanup = Date.now();
+      const removed = await cleanupExpired(deps.database.db);
+      if (removed.nonces || removed.idempotencyKeys) {
+        deps.logger.info(removed, 'expired rows removed');
+      }
+    }
   }
 
   function schedule() {

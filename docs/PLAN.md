@@ -4,7 +4,7 @@ Scheduling and liveness ("TTL") service for autonomous AI agents. Customers are 
 agent builders and the agents themselves: an agent must be able to discover the service,
 register and pay without a human in the loop.
 
-Status: **approved** (with amendments, see §11). This document is the source of truth for
+Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅. This document is the source of truth for
 scope; update it when decisions change.
 
 ---
