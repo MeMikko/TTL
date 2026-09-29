@@ -23,7 +23,22 @@ Docker starts on boot. GitHub Actions only runs checks (CI); it has no access to
 
 ## 1. Create the server (once)
 
-**Option A — hcloud CLI (local):**
+**Option A — Windows PowerShell, no extra tools (local):**
+
+```powershell
+ssh-keygen -t ed25519 -f $HOME\.ssh\time2live      # once; give it a passphrase
+$env:HCLOUD_TOKEN = "<token>"                      # Hetzner Console → project → Security → API tokens (Read & Write)
+.\deploy\create-server.ps1                         # defaults: cx23, hel1, ubuntu-24.04, $HOME\.ssh\time2live.pub
+```
+
+It uploads the SSH key, creates (or updates) the Cloud Firewall — inbound tcp 22/80/443,
+udp 443, icmp — and creates the server with the cloud-init that runs `deploy/provision.sh`,
+then prints the IPv4/IPv6 addresses, the DNS records and an `~/.ssh/config` entry. Re-running it
+is safe (existing objects are reused, firewall rules re-applied). `-DryRun` only writes
+`cloud-init.yaml` for pasting into the console. Parameters: `-ServerType`, `-Location`,
+`-Name`, `-KeyPath`.
+
+**Option A2 — hcloud CLI (Linux/macOS/WSL):**
 
 ```sh
 export HCLOUD_TOKEN=…                       # Hetzner Console → project → Security → API tokens

@@ -123,8 +123,8 @@ Default prices: $1 = 2,000 runs, $0.25 per monitor/month, packs $1 / $5 / $20.
 ├─ public/          llms.txt, .well-known/
 ├─ test/            unit/ + integration/ (real Postgres)
 ├─ contracts/       Foundry: src/, test/ (unit, fuzz, invariant), script/
-├─ deploy/          docker-compose.prod.yml, Caddyfile, cloud-init.yaml, provision.sh,
-│                   backup.sh, restore.sh, systemd/, deploy.sh
+├─ deploy/          docker-compose.prod.yml, Caddyfile, provision.sh, create-server.ps1,
+│                   update.sh, remote-deploy.sh, deploy.sh/.ps1, backup.sh, restore.sh, systemd/
 ├─ docker-compose.yml   local development
 ├─ Dockerfile           multi-stage, non-root
 ├─ .github/workflows/   ci.yml (checks only)
@@ -138,7 +138,8 @@ Dev commands are npm scripts (PowerShell, WSL and Git Bash). Server scripts are 
 - Compose: api, worker, postgres, caddy — all `restart: unless-stopped`. Only Caddy publishes
   80/443 (Docker-published ports bypass ufw!). Postgres has no `ports:` at all. json-file logs with rotation.
 - Provisioning: `cloud-init` + idempotent `provision.sh` (deploy user, key-only SSH, no root login,
-  ufw 22/80/443, fail2ban, unattended-upgrades, Docker) + Hetzner Cloud Firewall instructions (hcloud CLI).
+  ufw 22/80/443, fail2ban, unattended-upgrades, Docker). Server, SSH key and Cloud Firewall are
+  created via the Hetzner API: `create-server.ps1` (Windows, no extra tools) or `hcloud-setup.sh`.
 - Backups: systemd timer → daily `pg_dump -Fc` | restic → Storage Box via SFTP (port 23), encrypted;
   retention 7 daily / 4 weekly / 6 monthly; the backup script pings its own heartbeat monitor.
   `restore.sh` + a restore procedure tested end-to-end from a restic repo into an empty Postgres.

@@ -149,7 +149,8 @@ Write-Host "IPv6         $ipv6"
 Write-Host ''
 Write-Host 'Next steps (docs/OPERATIONS.md):'
 Write-Host "  1. DNS:  A  time2live.xyz -> $ipv4    AAAA  time2live.xyz -> $ipv6   (same for www)"
-Write-Host "  2. Add to $(Join-Path $HOME .ssh config):"
+# Two-argument Join-Path only: Windows PowerShell 5.1 has no -AdditionalChildPath.
+Write-Host "  2. Add to $(Join-Path (Join-Path $HOME '.ssh') 'config'):"
 Write-Host "       Host time2live"
 Write-Host "         HostName $ipv4"
 Write-Host "         User deploy"
