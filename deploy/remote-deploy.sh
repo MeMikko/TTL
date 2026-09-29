@@ -48,8 +48,18 @@ deep_health() {
 }
 
 DEPLOY_FILES=(docker-compose.yml Caddyfile)
-save_previous() { for f in "${DEPLOY_FILES[@]}"; do [[ -f "$f" ]] && cp -p "$f" "$f.previous"; done; }
-restore_previous() { for f in "${DEPLOY_FILES[@]}"; do [[ -f "$f.previous" ]] && cp -p "$f.previous" "$f"; done; }
+# `if` rather than `[[ … ]] && cp`: under `set -e` a false test as the last command would make
+# the function fail and silently abort the very first deploy (no previous files yet).
+save_previous() {
+  for f in "${DEPLOY_FILES[@]}"; do
+    if [[ -f "$f" ]]; then cp -p "$f" "$f.previous"; fi
+  done
+}
+restore_previous() {
+  for f in "${DEPLOY_FILES[@]}"; do
+    if [[ -f "$f.previous" ]]; then cp -p "$f.previous" "$f"; fi
+  done
+}
 install_files() {
   install -m 640 "$SRC_DIR/deploy/docker-compose.prod.yml" docker-compose.yml
   install -m 640 "$SRC_DIR/deploy/Caddyfile" Caddyfile

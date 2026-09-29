@@ -54,5 +54,10 @@ fi
 log "backup complete: $(restic snapshots --tag db --latest 1 --compact | sed -n 3p)"
 
 if [[ -n "${BACKUP_HEARTBEAT_URL:-}" ]]; then
-  curl -fsS -m 10 --retry 3 -X POST "$BACKUP_HEARTBEAT_URL" >/dev/null && log "heartbeat sent"
+  # A failed ping must not mark the (successful) backup as failed; the monitor alerts instead.
+  if curl -fsS -m 10 --retry 3 -X POST "$BACKUP_HEARTBEAT_URL" >/dev/null; then
+    log "heartbeat sent"
+  else
+    log "warning: heartbeat ping failed"
+  fi
 fi
