@@ -4,7 +4,7 @@ Scheduling and liveness ("TTL") service for autonomous AI agents. Customers are 
 agent builders and the agents themselves: an agent must be able to discover the service,
 register and pay without a human in the loop.
 
-Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ (live at time2live.xyz), phase 4 (billing) ✅ — x402 enabled per environment via `X402_*`. This document is the source of truth for
+Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ (live at time2live.xyz), phase 4 (billing) ✅ — x402 enabled per environment via `X402_*`, phase 5 (discovery + MCP) ✅. This document is the source of truth for
 scope; update it when decisions change.
 
 ---
@@ -213,3 +213,17 @@ Each phase ends with passing tests, then commit + push.
 4. **Contract:** max **20** registered tokens; fee-on-transfer tokens documented and tested;
    the **owner may also ping**.
 5. Repository content (code, comments, docs) is written in **English**.
+
+## 12. As built: discovery + MCP (phase 5)
+
+- `/mcp`: remote MCP server (official `@modelcontextprotocol/sdk`, web-standard Streamable HTTP
+  transport, **stateless** — a fresh server per request, `GET`/`DELETE` answer 405). Tools wrap
+  the REST API in-process (`app.fetch`), forwarding the caller's connection so per-IP limits apply.
+  Beyond the planned tools: `list_monitors`, `trigger_job`, `activate`, `buy_credits`.
+- x402 over MCP uses the official x402 MCP transport (`@x402/mcp`): PaymentRequired as an
+  `isError` tool result with `structuredContent`; payment in `_meta["x402/payment"]`, receipt in
+  `_meta["x402/payment-response"]`. Tested with `createx402MCPClient`.
+- Well-known: the MCP Server Card (SEP-1649 path `/.well-known/mcp/server-card.json`, alias
+  `/.well-known/mcp.json`) — SEP-2127 (`server-cards.json`, AI Catalog) is still in review, revisit
+  when it lands. x402 Bazaar listing is not a well-known file: the CDP facilitator indexes
+  resources at settlement (`extensions.bazaar`), so it comes with the mainnet facilitator.

@@ -151,6 +151,37 @@ packs. `GET /v1/billing` shows balance, tier and prices, `GET /v1/billing/paymen
 payments. Scheduled runs that cannot be paid are recorded as `skipped` (the job keeps its
 schedule and resumes producing runs as soon as there is allowance or credit).
 
+## MCP server and discovery
+
+`POST /mcp` is a remote MCP server (Streamable HTTP, stateless, JSON responses). Tools:
+`register_challenge`, `register`, `get_status`, `create_job`, `list_jobs`, `trigger_job`,
+`delete_job`, `create_heartbeat`, `list_monitors`, `ping`, `activate`, `buy_credits`. Each tool
+calls the REST API in-process, so auth, rate limits, idempotency (`idempotencyKey` argument) and
+billing behave identically.
+
+```json
+{
+  "mcpServers": {
+    "time2live": {
+      "type": "http",
+      "url": "https://time2live.xyz/mcp",
+      "headers": { "Authorization": "Bearer t2l_…" }
+    }
+  }
+}
+```
+
+An agent without a key can connect without the header, call `register_challenge`, sign the
+message with its wallet and call `register`; later tools take the key via the header or an
+`apiKey` argument. Paid tools follow the x402 MCP transport: the result carries
+`PaymentRequired` (`isError`, `structuredContent`), and an x402 MCP client (`@x402/mcp`
+`createx402MCPClient`) pays and retries with `_meta["x402/payment"]`; the receipt is returned in
+`_meta["x402/payment-response"]`.
+
+Discovery: `GET /` (service summary and links), `GET /llms.txt`, `GET /openapi.json` and the MCP
+Server Card at `/.well-known/mcp/server-card.json` (alias `/.well-known/mcp.json`; SEP-1649
+format, generated from the live tool list).
+
 ## Admin
 
 ```sh

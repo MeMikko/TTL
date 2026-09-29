@@ -146,7 +146,10 @@ export class ConfigError extends Error {
 
 /** Parse and validate configuration from an env-like object. Throws ConfigError on invalid input. */
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
-  const result = envSchema.safeParse(env);
+  // Stray whitespace or a Windows line ending (\r) in .env would otherwise fail validation
+  // or, worse, end up inside secrets and URLs.
+  const trimmed = Object.fromEntries(Object.entries(env).map(([k, v]) => [k, v?.trim()]));
+  const result = envSchema.safeParse(trimmed);
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`)

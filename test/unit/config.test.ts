@@ -14,6 +14,16 @@ describe('loadConfig', () => {
     expect(cfg.HEALTH_MAX_TICK_AGE_MS).toBe(120_000);
   });
 
+  it('ignores stray whitespace and Windows line endings from .env', () => {
+    const cfg = loadConfig({
+      ...base,
+      X402_ENABLED: 'true\r',
+      X402_PAY_TO: '0x4b19ee2a3de2521a3adc901989944c209c0a60ea \r',
+    });
+    expect(cfg.X402_ENABLED).toBe(true);
+    expect(cfg.X402_PAY_TO).toBe('0x4b19ee2a3de2521a3adc901989944c209c0a60ea');
+  });
+
   it('coerces numeric strings', () => {
     expect(loadConfig({ ...base, PORT: '8080' }).PORT).toBe(8080);
   });
