@@ -10,11 +10,40 @@ export const ErrorSchema = z
   })
   .openapi('Error');
 
+const ERROR_DESCRIPTIONS: Record<number, string> = {
+  400: 'Invalid request (`validation_error` lists the failing fields)',
+  401: 'Missing or invalid API key',
+  402:
+    'Payment required. With x402 enabled the `PAYMENT-REQUIRED` header (base64 JSON, x402 v2) ' +
+    'lists the accepted payments and the body carries the same object plus `error`; retry the ' +
+    'same request with `PAYMENT-SIGNATURE`. Without x402: `quota_exceeded`.',
+  403: 'Account frozen, or not allowed',
+  404: 'Not found',
+  409: 'Conflict with the current state',
+  413: 'Request body too large',
+  422: 'Target URL rejected (blocked address or unresolvable host)',
+  429: 'Rate limited; see `Retry-After`',
+  501: 'Not enabled on this server',
+};
+
 export const errorResponses = (...codes: number[]) =>
   Object.fromEntries(
     codes.map((code) => [
       code,
-      { description: `Error ${code}`, content: { 'application/json': { schema: ErrorSchema } } },
+      {
+        description: ERROR_DESCRIPTIONS[code] ?? `Error ${code}`,
+        content: { 'application/json': { schema: ErrorSchema } },
+        ...(code === 402
+          ? {
+              headers: {
+                'PAYMENT-REQUIRED': {
+                  description: 'x402 v2 PaymentRequired, base64-encoded JSON',
+                  schema: { type: 'string' as const },
+                },
+              },
+            }
+          : {}),
+      },
     ]),
   );
 
