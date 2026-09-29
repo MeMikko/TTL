@@ -191,8 +191,9 @@ log "backup timer"
 if [[ -f "$HERE/systemd/time2live-backup.service" ]]; then
   install -m 644 "$HERE/systemd/time2live-backup.service" "$HERE/systemd/time2live-backup.timer" /etc/systemd/system/
   systemctl daemon-reload 2>/dev/null || true
-  # Enabled now; it only succeeds once backup.env, the restic password and the Storage Box key exist.
-  systemctl enable time2live-backup.timer >/dev/null 2>&1 || true
+  # Enabled AND started (plain `enable` would only take effect after the next reboot). Runs fail
+  # harmlessly until backup.env, the restic password and the Storage Box key exist.
+  systemctl enable --now time2live-backup.timer >/dev/null 2>&1 || true
 fi
 
 log "done"
