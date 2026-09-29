@@ -21,6 +21,9 @@ if [[ -f "$BACKUP_ENV_FILE" ]]; then
   set +a
 fi
 : "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY not set (see $BACKUP_ENV_FILE)}"
+# systemd runs this without $HOME, so give restic an explicit cache (it is much slower without).
+export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/var/cache/time2live-restic}"
+mkdir -p "$RESTIC_CACHE_DIR"
 [[ -n "${RESTIC_PASSWORD_FILE:-}${RESTIC_PASSWORD:-}" ]] || { echo "restic password not set" >&2; exit 2; }
 export RESTIC_REPOSITORY
 
