@@ -1,0 +1,60 @@
+# Local development.
+#   docker compose up -d postgres        -> just the database (run api/worker with npm run dev:*)
+#   docker compose --profile app up -d   -> full stack from the production image
+name: time2live-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: t2l
+      POSTGRES_PASSWORD: t2l
+      POSTGRES_DB: time2live
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U t2l -d time2live']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    profiles: [app]
+    build: .
+    command: ['node', 'dist/bin/migrate.js']
+    environment: &appenv
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://t2l:t2l@postgres:5432/time2live
+      PUBLIC_BASE_URL: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: [app]
+    build: .
+    restart: unless-stopped
+    environment: *appenv
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    profiles: [app]
+    build: .
+    restart: unless-stopped
+    command: ['node', 'dist/bin/worker.js']
+    environment: *appenv
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
