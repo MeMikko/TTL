@@ -31,6 +31,8 @@ services:
       LOG_LEVEL: info
       DATABASE_URL: postgres://t2l:t2l@postgres:5432/time2live
       PUBLIC_BASE_URL: http://localhost:3000
+      # Local development only; production keys live in the server's .env.
+      ENCRYPTION_KEY: ZGV2LW9ubHktZGV2LW9ubHktZGV2LW9ubHktZGV2LTE=
     depends_on:
       postgres:
         condition: service_healthy

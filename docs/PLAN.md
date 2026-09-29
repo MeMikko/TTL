@@ -4,7 +4,7 @@ Scheduling and liveness ("TTL") service for autonomous AI agents. Customers are 
 agent builders and the agents themselves: an agent must be able to discover the service,
 register and pay without a human in the loop.
 
-Status: **approved** (with amendments, see §11). This document is the source of truth for
+Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ — live deployment pending server/DNS/secrets. This document is the source of truth for
 scope; update it when decisions change.
 
 ---
@@ -22,7 +22,10 @@ Internet ──443──> Caddy (TLS) ──> api (Hono)  ──┐
   Never performs outbound webhook calls.
 - **worker** —
   - scheduler loop: claims due jobs (`SELECT … FOR UPDATE SKIP LOCKED`), computes `next_run_at`;
-  - delivery: webhook calls through pg-boss queues (retry + exponential backoff);
+  - delivery: webhook calls queued in the `job_runs` table itself (claimed with
+    `FOR UPDATE SKIP LOCKED` + a lease; retry with exponential backoff). Decision (phase 2):
+    no pg-boss — run history and queue are the same rows, so they can never disagree, and
+    scheduling (quota + run insert + next_run_at) is a single transaction;
   - monitor sweeper: finds expired heartbeats via indexed `expires_at`, alive → dead, sends alerts;
   - retention cleanup (30 days, see §11);
   - keeper (phase 7).
@@ -120,11 +123,11 @@ Default prices: $1 = 2,000 runs, $0.25 per monitor/month, packs $1 / $5 / $20.
 ├─ public/          llms.txt, .well-known/
 ├─ test/            unit/ + integration/ (real Postgres)
 ├─ contracts/       Foundry: src/, test/ (unit, fuzz, invariant), script/
-├─ deploy/          docker-compose.prod.yml, Caddyfile, cloud-init.yaml, provision.sh,
-│                   backup.sh, restore.sh, systemd/, deploy.sh
+├─ deploy/          docker-compose.prod.yml, Caddyfile, provision.sh, create-server.ps1,
+│                   update.sh, remote-deploy.sh, deploy.sh/.ps1, backup.sh, restore.sh, systemd/
 ├─ docker-compose.yml   local development
 ├─ Dockerfile           multi-stage, non-root
-├─ .github/workflows/   ci.yml, deploy.yml
+├─ .github/workflows/   ci.yml (checks only)
 └─ .gitattributes       *.sh eol=lf  (CRLF breaks bash scripts on Windows checkouts)
 ```
 
@@ -135,12 +138,16 @@ Dev commands are npm scripts (PowerShell, WSL and Git Bash). Server scripts are 
 - Compose: api, worker, postgres, caddy — all `restart: unless-stopped`. Only Caddy publishes
   80/443 (Docker-published ports bypass ufw!). Postgres has no `ports:` at all. json-file logs with rotation.
 - Provisioning: `cloud-init` + idempotent `provision.sh` (deploy user, key-only SSH, no root login,
-  ufw 22/80/443, fail2ban, unattended-upgrades, Docker) + Hetzner Cloud Firewall instructions (hcloud CLI).
+  ufw 22/80/443, fail2ban, unattended-upgrades, Docker). Server, SSH key and Cloud Firewall are
+  created via the Hetzner API: `create-server.ps1` (Windows, no extra tools) or `hcloud-setup.sh`.
 - Backups: systemd timer → daily `pg_dump -Fc` | restic → Storage Box via SFTP (port 23), encrypted;
   retention 7 daily / 4 weekly / 6 monthly; the backup script pings its own heartbeat monitor.
   `restore.sh` + a restore procedure tested end-to-end from a restic repo into an empty Postgres.
-- Deploy: GitHub Actions: test → image to GHCR → SSH → `docker compose pull` → one-off `migrate`
-  → `up -d` → health check (roll back to previous image on failure). `deploy.sh` does the same manually.
+- Deploy (decision 2026-09-29, same model as the other MeMikko projects): the server holds a git
+  checkout (read-only GitHub deploy key) and builds images itself. `deploy.sh` (local) → SSH →
+  `update.sh` (fetch + checkout) → that commit's `remote-deploy.sh`: build → one-off `migrate` →
+  `up -d` → deep health check (roll back to the previous image on failure). GitHub Actions runs
+  checks only (CI) and holds no server credentials; no container registry.
 
 ## 8. Phase 2 product: dead man's switch contract (Base)
 

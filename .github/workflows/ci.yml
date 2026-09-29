@@ -46,3 +46,28 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck deploy/*.sh
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+      - name: production compose file
+        run: |
+          cp deploy/.env.production.example deploy/.env
+          sed -i 's/^IMAGE_TAG=$/IMAGE_TAG=ci/; s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci/; s/^ENCRYPTION_KEY=$/ENCRYPTION_KEY=ci/' deploy/.env
+          docker compose -f deploy/docker-compose.prod.yml --profile tools config --quiet
+      - name: Caddyfile
+        run: |
+          docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e DOMAIN=example.com -e ACME_EMAIL=ci@example.com caddy:2 caddy validate --config /etc/caddy/Caddyfile
+      - name: cloud-init renders
+        run: |
+          ssh-keygen -q -t ed25519 -N '' -f /tmp/k
+          deploy/make-cloud-init.sh /tmp/k.pub > /tmp/ci.yaml
+          python3 -c "import yaml; d = yaml.safe_load(open('/tmp/ci.yaml')); assert d['runcmd'] and len(d['write_files']) == 3"
