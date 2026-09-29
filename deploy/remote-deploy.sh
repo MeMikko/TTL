@@ -66,11 +66,16 @@ else
   log "building $IMAGE:$TAG"
   # Optional extra flags, e.g. a build proxy: DOCKER_BUILD_FLAGS in the environment or .env.
   build_flags="${DOCKER_BUILD_FLAGS:-$(env_get DOCKER_BUILD_FLAGS)}"
+  build_log="$(mktemp)"
   # shellcheck disable=SC2086 # intentional word splitting of the flags
-  if ! docker build --quiet $build_flags --build-arg GIT_SHA="$SHA" -t "$IMAGE:$TAG" "$SRC_DIR" >/dev/null; then
-    log "build failed; the running release was not touched"
+  if ! docker build --progress=plain $build_flags --build-arg GIT_SHA="$SHA" -t "$IMAGE:$TAG" "$SRC_DIR" >"$build_log" 2>&1; then
+    log "build failed; the running release was not touched. Last lines of the build log:"
+    tail -n 40 "$build_log" >&2
+    rm -f "$build_log"
     exit 1
   fi
+  rm -f "$build_log"
+  log "build complete"
 fi
 
 save_previous
