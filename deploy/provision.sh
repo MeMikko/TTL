@@ -6,7 +6,7 @@
 # Result: user `deploy` (key-only SSH, `docker` + passwordless sudo), root login and passwords disabled,
 # ufw allowing only 22/80/443, fail2ban for sshd, unattended security upgrades (with automatic
 # reboot at 04:30 UTC when required), Docker Engine + compose plugin with log rotation,
-# restic, /opt/time2live for the app and the daily backup timer.
+# restic, a read-only GitHub deploy key, /opt/time2live for the app and the daily backup timer.
 set -Eeuo pipefail
 
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
@@ -153,6 +153,28 @@ if ! swapon --show=NAME --noheadings | grep -q . && [[ ! -f /swapfile ]]; then
     swapon /swapfile && echo '/swapfile none swap sw 0 0' >>/etc/fstab || echo "swap setup skipped"
 fi
 
+log "git access (read-only GitHub deploy key)"
+# The server clones the repository and builds images itself. The key only needs read access to
+# this one repository (GitHub → repo → Settings → Deploy keys, "Allow write access" unchecked).
+sudo -u "$DEPLOY_USER" -H bash -eu <<'SH'
+cd ~
+[[ -f .ssh/github_deploy ]] || ssh-keygen -q -t ed25519 -N '' -C "time2live-server" -f .ssh/github_deploy
+grep -q '^Host github.com$' .ssh/config 2>/dev/null || cat >>.ssh/config <<'CONF'
+Host github.com
+  User git
+  IdentityFile ~/.ssh/github_deploy
+  IdentitiesOnly yes
+  UserKnownHostsFile ~/.ssh/known_hosts_github
+CONF
+chmod 600 .ssh/config
+SH
+# Pin GitHub's SSH host keys from its API over HTTPS instead of trusting the first scan.
+if keys="$(curl -fsSL --max-time 20 https://api.github.com/meta | jq -er '.ssh_keys[] | "github.com " + .')"; then
+  install -m 644 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /dev/stdin "$home/.ssh/known_hosts_github" <<<"$keys"
+else
+  echo "warning: could not fetch GitHub host keys; add them before cloning (docs/OPERATIONS.md)" >&2
+fi
+
 log "application directories"
 install -d -m 750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$APP_DIR"
 install -d -m 700 -o root -g root /etc/time2live /var/backups/time2live
@@ -177,7 +199,10 @@ log "done"
 cat <<MSG
 Next steps (docs/OPERATIONS.md):
   1. From your machine, check you can log in: ssh $DEPLOY_USER@<server>
-  2. Create $APP_DIR/.env from .env.production.example (chmod 600)
+  2. Create $APP_DIR/.env from deploy/.env.production.example (chmod 600)
   3. Configure backups: /etc/time2live/restic-password, Storage Box SSH key, restic init
-  4. First deploy: deploy/deploy.sh $DEPLOY_USER@<server> <image-tag>  (or the GitHub workflow)
+  4. Add this read-only deploy key to GitHub (repo → Settings → Deploy keys, no write access):
+       $(cat "$home/.ssh/github_deploy.pub")
+     then clone:  git clone git@github.com:MeMikko/TTL.git $APP_DIR/src
+  5. First deploy from your machine: deploy/deploy.sh <ssh-host> main
 MSG

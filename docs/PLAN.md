@@ -127,7 +127,7 @@ Default prices: $1 = 2,000 runs, $0.25 per monitor/month, packs $1 / $5 / $20.
 │                   backup.sh, restore.sh, systemd/, deploy.sh
 ├─ docker-compose.yml   local development
 ├─ Dockerfile           multi-stage, non-root
-├─ .github/workflows/   ci.yml, deploy.yml
+├─ .github/workflows/   ci.yml (checks only)
 └─ .gitattributes       *.sh eol=lf  (CRLF breaks bash scripts on Windows checkouts)
 ```
 
@@ -142,8 +142,11 @@ Dev commands are npm scripts (PowerShell, WSL and Git Bash). Server scripts are 
 - Backups: systemd timer → daily `pg_dump -Fc` | restic → Storage Box via SFTP (port 23), encrypted;
   retention 7 daily / 4 weekly / 6 monthly; the backup script pings its own heartbeat monitor.
   `restore.sh` + a restore procedure tested end-to-end from a restic repo into an empty Postgres.
-- Deploy: GitHub Actions: test → image to GHCR → SSH → `docker compose pull` → one-off `migrate`
-  → `up -d` → health check (roll back to previous image on failure). `deploy.sh` does the same manually.
+- Deploy (decision 2026-09-29, same model as the other MeMikko projects): the server holds a git
+  checkout (read-only GitHub deploy key) and builds images itself. `deploy.sh` (local) → SSH →
+  `update.sh` (fetch + checkout) → that commit's `remote-deploy.sh`: build → one-off `migrate` →
+  `up -d` → deep health check (roll back to the previous image on failure). GitHub Actions runs
+  checks only (CI) and holds no server credentials; no container registry.
 
 ## 8. Phase 2 product: dead man's switch contract (Base)
 

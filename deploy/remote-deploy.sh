@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-# Runs ON THE SERVER in the app directory (default /opt/time2live):
-#   ./remote-deploy.sh <image-tag>
-# pull → start postgres → migrate → start api/worker/caddy → deep health check.
-# If the new release is unhealthy, the previous image tag is started again.
-# Migrations are forward-only: keep them backward compatible (expand/contract) so that a
-# rollback of the code never meets a schema it cannot run against.
+# Runs ON THE SERVER, called by update.sh with the commit that is checked out in SRC_DIR:
+#   remote-deploy.sh <commit-sha>
+# install deployment files → build image on this server (skipped if that commit was built
+# before) → start postgres → migrate → start api/worker/caddy → deep health check.
+# If the migration fails, the running release is untouched. If the new release is unhealthy,
+# the previous image and deployment files are started again.
+# Migrations are forward-only: keep them backward compatible (expand/contract) so a rolled-back
+# release still runs on the newer schema.
 set -Eeuo pipefail
 
-APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+APP_DIR="${APP_DIR:-/opt/time2live}"
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
-cd "$APP_DIR"
+KEEP_IMAGES="${KEEP_IMAGES:-5}"
+IMAGE=time2live
 
-NEW_TAG="${1:?usage: remote-deploy.sh <image-tag>}"
-[[ "$NEW_TAG" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || { echo "invalid tag: $NEW_TAG" >&2; exit 2; }
-[[ -f .env ]] || { echo "missing $APP_DIR/.env (see .env.production.example)" >&2; exit 2; }
+SHA="${1:?usage: remote-deploy.sh <commit-sha>}"
+[[ "$SHA" =~ ^[0-9a-f]{7,40}$ ]] || { echo "invalid commit sha: $SHA" >&2; exit 2; }
+TAG="${SHA:0:12}"
+cd "$APP_DIR"
+[[ -f .env ]] || { echo "missing $APP_DIR/.env (see deploy/.env.production.example)" >&2; exit 2; }
 
 log() { printf '[deploy %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 compose() { docker compose "$@"; }
@@ -41,28 +47,59 @@ deep_health() {
   return 1
 }
 
-PREV_TAG="$(env_get IMAGE_TAG)"
-log "deploying $NEW_TAG (previous: ${PREV_TAG:-none})"
+DEPLOY_FILES=(docker-compose.yml Caddyfile)
+save_previous() { for f in "${DEPLOY_FILES[@]}"; do [[ -f "$f" ]] && cp -p "$f" "$f.previous"; done; }
+restore_previous() { for f in "${DEPLOY_FILES[@]}"; do [[ -f "$f.previous" ]] && cp -p "$f.previous" "$f"; done; }
+install_files() {
+  install -m 640 "$SRC_DIR/deploy/docker-compose.prod.yml" docker-compose.yml
+  install -m 640 "$SRC_DIR/deploy/Caddyfile" Caddyfile
+  install -m 640 "$SRC_DIR/deploy/.env.production.example" .env.production.example
+  install -m 750 "$SRC_DIR/deploy/backup.sh" "$SRC_DIR/deploy/restore.sh" .
+}
 
-env_set IMAGE_TAG "$NEW_TAG"
-if ! compose --profile tools pull --quiet api worker migrate; then
-  log "pull failed; keeping $PREV_TAG"
-  env_set IMAGE_TAG "$PREV_TAG"
-  exit 1
+PREV_TAG="$(env_get IMAGE_TAG)"
+log "deploying $TAG (previous: ${PREV_TAG:-none})"
+
+if docker image inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+  log "image $IMAGE:$TAG exists; skipping build"
+else
+  log "building $IMAGE:$TAG"
+  # Optional extra flags, e.g. a build proxy: DOCKER_BUILD_FLAGS in the environment or .env.
+  build_flags="${DOCKER_BUILD_FLAGS:-$(env_get DOCKER_BUILD_FLAGS)}"
+  # shellcheck disable=SC2086 # intentional word splitting of the flags
+  if ! docker build --quiet $build_flags --build-arg GIT_SHA="$SHA" -t "$IMAGE:$TAG" "$SRC_DIR" >/dev/null; then
+    log "build failed; the running release was not touched"
+    exit 1
+  fi
 fi
+
+save_previous
+install_files
+env_set IMAGE "$IMAGE"
+env_set IMAGE_TAG "$TAG"
+
+rollback_files() {
+  restore_previous
+  env_set IMAGE_TAG "$PREV_TAG"
+}
 
 compose up -d --wait postgres
 log "running migrations"
 if ! compose run --rm migrate; then
   log "migration failed; the running release was not touched"
-  env_set IMAGE_TAG "$PREV_TAG"
+  rollback_files
   exit 1
 fi
 
 compose up -d --remove-orphans --wait --wait-timeout 120 api worker caddy || true
 if deep_health; then
   printf '%s\n' "$PREV_TAG" >.image-tag.previous
-  log "healthy: $NEW_TAG is live"
+  log "healthy: $TAG is live"
+  # Keep the newest images for instant rollbacks; always keep the live and previous ones.
+  docker images "$IMAGE" --format '{{.Tag}}' | tail -n +"$((KEEP_IMAGES + 1))" | while read -r old; do
+    [[ "$old" == "$TAG" || "$old" == "$PREV_TAG" ]] && continue
+    docker rmi "$IMAGE:$old" >/dev/null 2>&1 || true
+  done
   docker image prune -f >/dev/null
   exit 0
 fi
@@ -71,8 +108,8 @@ log "new release is unhealthy"
 compose logs --tail 50 api worker || true
 if [[ -n "$PREV_TAG" ]]; then
   log "rolling back to $PREV_TAG"
-  env_set IMAGE_TAG "$PREV_TAG"
-  compose up -d --wait --wait-timeout 120 api worker caddy || true
+  rollback_files
+  compose up -d --remove-orphans --wait --wait-timeout 120 api worker caddy || true
   if deep_health; then log "rollback healthy"; else log "ROLLBACK ALSO UNHEALTHY - investigate now"; fi
 fi
 exit 1

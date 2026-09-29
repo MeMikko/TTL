@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
-# Manual deploy from a workstation (Linux, macOS, WSL or Git Bash on Windows).
-#   deploy/deploy.sh deploy@time2live.xyz            # deploys the image for the current commit
-#   deploy/deploy.sh deploy@time2live.xyz <tag>      # a specific image tag (e.g. a previous sha)
-# The image must already exist in GHCR (built by the Deploy workflow). The server needs pull
-# access: either the package is public, or run once on the server:
-#   echo <PAT with read:packages> | docker login ghcr.io -u <github-user> --password-stdin
+# Deploy from your machine (Linux, macOS, WSL or Git Bash on Windows). The server fetches the
+# commit from GitHub, builds the image itself and runs deploy/remote-deploy.sh.
+#   deploy/deploy.sh time2live            # the commit you have checked out (must be pushed)
+#   deploy/deploy.sh time2live main       # latest origin/main
+#   deploy/deploy.sh time2live <sha>      # any pushed commit, e.g. to roll back
+# `time2live` is an ~/.ssh/config host (or user@host). Extra ssh options: SSH_OPTS.
 set -Eeuo pipefail
 
-TARGET="${1:?usage: deploy.sh <user@host> [image-tag]}"
-TAG="${2:-$(git rev-parse HEAD)}"
+TARGET="${1:?usage: deploy.sh <ssh-host> [ref]}"
+REF="${2:-}"
+SRC_DIR="${SRC_DIR:-/opt/time2live/src}"
 
-if [[ -z "${2:-}" ]] && [[ -n "$(git status --porcelain)" ]]; then
-  echo "warning: uncommitted changes are NOT part of image $TAG" >&2
+if [[ -z "$REF" ]]; then
+  REF="$(git rev-parse HEAD)"
+  git fetch --quiet origin
+  if [[ -z "$(git branch -r --contains "$REF" 2>/dev/null)" ]]; then
+    echo "commit ${REF:0:12} is not on origin — push it first (the server fetches from GitHub)" >&2
+    exit 1
+  fi
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "note: uncommitted local changes are NOT deployed; deploying ${REF:0:12}" >&2
+  fi
 fi
-exec "$(dirname "${BASH_SOURCE[0]}")/sync-and-deploy.sh" "$TARGET" "$TAG"
+[[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$ ]] || { echo "invalid ref: $REF" >&2; exit 2; }
+
+# shellcheck disable=SC2086 # intentional word splitting of user-supplied options
+exec ssh ${SSH_OPTS:-} "$TARGET" "$SRC_DIR/deploy/update.sh '$REF'"

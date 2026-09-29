@@ -9,8 +9,9 @@ x-logging: &logging
     max-size: '10m'
     max-file: '5'
 
-x-app: &app
-  image: ${IMAGE:-ghcr.io/memikko/ttl}:${IMAGE_TAG:?IMAGE_TAG must be set (remote-deploy.sh writes it to .env)}
+x-app: &app # Built on this server by remote-deploy.sh from the git checkout; never pulled.
+  image: ${IMAGE:-time2live}:${IMAGE_TAG:?IMAGE_TAG must be set (remote-deploy.sh writes it to .env)}
+  pull_policy: never
   env_file: .env
   environment:
     NODE_ENV: production

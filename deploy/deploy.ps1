@@ -1,26 +1,24 @@
-# Manual deploy from Windows PowerShell (uses the built-in OpenSSH client).
-#   .\deploy\deploy.ps1 -Target deploy@time2live.xyz [-Tag <image-tag>]
-# Same behaviour as deploy.sh; see that file for registry access notes.
+# Deploy from Windows PowerShell (built-in OpenSSH client). Same as deploy.sh:
+#   .\deploy\deploy.ps1 -Target time2live            # the checked-out commit (must be pushed)
+#   .\deploy\deploy.ps1 -Target time2live -Ref main  # latest origin/main, or any pushed SHA
 param(
   [Parameter(Mandatory = $true)][string]$Target,
-  [string]$Tag = (git rev-parse HEAD),
-  [string]$AppDir = '/opt/time2live'
+  [string]$Ref = '',
+  [string]$SrcDir = '/opt/time2live/src'
 )
 $ErrorActionPreference = 'Stop'
-if ($Tag -notmatch '^[A-Za-z0-9_.-]{1,128}$') { throw "invalid tag: $Tag" }
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-function Invoke-Checked([string]$exe, [string[]]$argList) {
-  & $exe @argList
-  if ($LASTEXITCODE -ne 0) { throw "$exe failed with exit code $LASTEXITCODE" }
+if ($Ref -eq '') {
+  $Ref = (git rev-parse HEAD).Trim()
+  git fetch --quiet origin
+  if (-not (git branch -r --contains $Ref)) {
+    throw "commit $($Ref.Substring(0, 12)) is not on origin - push it first (the server fetches from GitHub)"
+  }
+  if (git status --porcelain) {
+    Write-Warning "uncommitted local changes are NOT deployed; deploying $($Ref.Substring(0, 12))"
+  }
 }
+if ($Ref -notmatch '^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$') { throw "invalid ref: $Ref" }
 
-Write-Host "==> uploading deployment files to ${Target}:$AppDir"
-Invoke-Checked scp @('-q', "$here\docker-compose.prod.yml", "${Target}:$AppDir/docker-compose.yml")
-Invoke-Checked scp @('-q', "$here\Caddyfile", "$here\remote-deploy.sh", "$here\backup.sh",
-  "$here\restore.sh", "$here\.env.production.example", "${Target}:$AppDir/")
-# Files checked out on Windows may have CRLF endings; strip them on the server just in case.
-Invoke-Checked ssh @($Target, "sed -i 's/\r$//' $AppDir/*.sh && chmod 750 $AppDir/*.sh")
-
-Write-Host "==> deploying $Tag"
-Invoke-Checked ssh @($Target, "$AppDir/remote-deploy.sh '$Tag'")
+ssh $Target "$SrcDir/deploy/update.sh '$Ref'"
+if ($LASTEXITCODE -ne 0) { throw "deploy failed with exit code $LASTEXITCODE" }

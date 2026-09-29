@@ -12,9 +12,12 @@ Internet ─┬─ Hetzner Cloud Firewall (22, 80, 443 tcp; 443 udp; icmp)
                                       worker ──────┘  └─ daily pg_dump → restic → Storage Box
 ```
 
-Server layout: `/opt/time2live/` holds `docker-compose.yml`, `Caddyfile`, `.env` (secrets,
-chmod 600), `remote-deploy.sh`, `backup.sh`, `restore.sh`. Backup configuration lives in
-`/etc/time2live/` (root only). Containers use `restart: unless-stopped`; Docker starts on boot.
+Server layout: `/opt/time2live/src` is a git checkout of this repository (read-only deploy
+key); images are **built on the server** from it — no registry, no GitHub secrets.
+`/opt/time2live/` holds the running `docker-compose.yml`, `Caddyfile`, `.env` (secrets,
+chmod 600), `backup.sh`, `restore.sh` (copied from the checkout by each deploy). Backup
+configuration lives in `/etc/time2live/` (root only). Containers use `restart: unless-stopped`;
+Docker starts on boot. GitHub Actions only runs checks (CI); it has no access to the server.
 
 ---
 
@@ -40,9 +43,10 @@ above, and paste the output of `deploy/make-cloud-init.sh ~/.ssh/id_ed25519.pub`
 `provision.sh` sets up: user `deploy` (key-only, `docker` group and passwordless sudo),
 `PermitRootLogin no`, no password/keyboard-interactive auth, `AllowUsers deploy`, ufw,
 fail2ban (sshd), unattended upgrades with automatic reboot at 04:30 UTC when required, Docker
-Engine + compose plugin with log rotation (10 MB × 5 per container), 2 GB swap, restic, the app
-and backup directories and the backup timer. It refuses to harden SSH if the deploy user has no
-key, so it cannot lock you out.
+Engine + compose plugin with log rotation (10 MB × 5 per container), 2 GB swap, restic, a
+read-only GitHub deploy key for the `deploy` user (GitHub's host keys pinned from
+`api.github.com/meta` over HTTPS), the app and backup directories and the backup timer. It
+refuses to harden SSH if the deploy user has no key, so it cannot lock you out.
 
 Verify after a few minutes **(local)**:
 
@@ -52,7 +56,21 @@ ssh root@<ip>          # must fail: Permission denied (publickey)
 ```
 
 > The deploy user's SSH key is effectively root on the server (docker + sudo). Give it a
-> passphrase (or a hardware key) on your machine and use a _separate_ key for GitHub Actions.
+> passphrase (or a hardware key) on your machine. It never needs to leave your machine.
+
+**Repository access (once).** The end of the provisioning log prints the server's public
+deploy key. Add it in GitHub → MeMikko/TTL → Settings → Deploy keys → _Add deploy key_
+(leave "Allow write access" **unchecked**), then **(server)**:
+
+```sh
+cat ~/.ssh/github_deploy.pub                     # if you need the key again
+git clone git@github.com:MeMikko/TTL.git /opt/time2live/src
+```
+
+If the provisioning log warned that GitHub's host keys could not be fetched, add them by hand
+and compare the fingerprints with the ones GitHub publishes ("GitHub's SSH key fingerprints" in
+GitHub Docs) before cloning:
+`ssh-keyscan github.com > ~/.ssh/known_hosts_github && ssh-keygen -lf ~/.ssh/known_hosts_github`.
 
 ## 2. DNS
 
@@ -64,7 +82,7 @@ resolves and ports 80/443 are reachable.
 
 ```sh
 cd /opt/time2live
-cp .env.production.example .env        # the file is uploaded by the first deploy; or scp it
+cp src/deploy/.env.production.example .env
 chmod 600 .env
 openssl rand -hex 32                   # → POSTGRES_PASSWORD (hex: it goes into a URL)
 openssl rand -base64 32                # → ENCRYPTION_KEY
@@ -75,44 +93,34 @@ nano .env                              # DOMAIN, ACME_EMAIL, PUBLIC_BASE_URL, SE
 unreadable — it is included in the encrypted backups (§5), and you should also keep a copy of
 `.env` in your password manager.
 
-**Registry access.** Images are published to `ghcr.io/memikko/ttl`. The GitHub workflow logs the
-server in with a short-lived token for each deploy and logs out afterwards. For manual deploys
-either make the package public (GitHub → Packages → ttl → Settings) or log in once:
-`echo <PAT with read:packages> | docker login ghcr.io -u <github-user> --password-stdin`.
-
 ## 4. Deploying
 
-**Automatic:** every push to `main` that passes CI builds `ghcr.io/memikko/ttl:<sha>` and
-deploys it (workflow _Deploy_). Configure once under GitHub → Settings:
-
-| Secret (environment `production`) | Value                                                                                                                             |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `DEPLOY_HOST`                     | server IP or hostname                                                                                                             |
-| `DEPLOY_USER`                     | `deploy` (optional, default)                                                                                                      |
-| `DEPLOY_SSH_KEY`                  | private key of a dedicated CI key pair (public half in `~deploy/.ssh/authorized_keys`)                                            |
-| `DEPLOY_KNOWN_HOSTS`              | output of `ssh-keyscan <host>` — compare fingerprints with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server first |
-
-Until `DEPLOY_HOST` exists the deploy job is skipped with a notice. Add _required reviewers_
-to the `production` environment if you want to approve each release.
-
-**Manual (local):**
+Push your commits to GitHub first (CI runs the checks there), then **(local)**:
 
 ```sh
-deploy/deploy.sh deploy@time2live.xyz            # image of the current commit
-deploy/deploy.sh deploy@time2live.xyz <sha>      # any existing image tag
+deploy/deploy.sh time2live               # the commit you have checked out (must be pushed)
+deploy/deploy.sh time2live main          # latest origin/main
+deploy/deploy.sh time2live <sha>         # any pushed commit — this is also how you roll back
 # Windows PowerShell:
-.\deploy\deploy.ps1 -Target deploy@time2live.xyz [-Tag <sha>]
+.\deploy\deploy.ps1 -Target time2live [-Ref main|<sha>]
 ```
 
-Both upload the compose file, Caddyfile and scripts, then run `remote-deploy.sh <tag>` on the
-server, which: pulls the image → starts Postgres → **runs migrations** (`docker compose run --rm
-migrate`) → starts api, worker and Caddy → waits for `GET /healthz?deep=1` (database + a fresh
-worker tick). If the migration fails, the running release is left untouched. If the new release
-is unhealthy, the previous tag is started again automatically. The running tag is kept in
-`IMAGE_TAG` in `.env`, so a plain `docker compose up -d` always starts the right version.
+(`time2live` is a host entry in `~/.ssh/config`; `deploy@<ip>` works too.) Or directly on the
+server: `/opt/time2live/src/deploy/update.sh [ref]`.
 
-**Rollback:** run the _Deploy_ workflow manually with `tag = <previous sha>`, or
-`deploy/deploy.sh deploy@… <previous sha>`; the previous tag is in `/opt/time2live/.image-tag.previous`.
+What happens: `update.sh` fetches from GitHub and checks out the commit, then hands over to
+**that commit's** `remote-deploy.sh`, which: builds `time2live:<sha12>` on the server (skipped if
+that commit was built before) → installs its compose file, Caddyfile and scripts into
+`/opt/time2live` → starts Postgres → **runs migrations** (`docker compose run --rm migrate`) →
+starts api, worker and Caddy → waits for `GET /healthz?deep=1` (database + a fresh worker tick).
+
+- Build fails → nothing changes.
+- Migration fails → the running release is left untouched.
+- New release unhealthy → the previous image and deployment files are started again automatically.
+
+The running tag is kept in `IMAGE_TAG` in `.env`, so a plain `docker compose up -d` always
+starts the right version. The newest 5 images stay on the server, so rolling back to a recent
+commit is instant (no rebuild); the previous tag is in `/opt/time2live/.image-tag.previous`.
 Migrations are forward-only, so write them backward compatible (add columns/tables first, remove
 old ones in a later release) — a rolled-back release then still runs on the newer schema.
 
@@ -177,11 +185,11 @@ restores with `pg_restore --exit-on-error`, and starts api and worker again.
 1. Create and provision a server (§1), point DNS at it (§2).
 2. Recreate `/root/.ssh/config`, the Storage Box key (§5 step 1 — install the new key) and
    `/etc/time2live/restic-password` from your password manager.
-3. `sudo ./restore.sh --config > .env && chmod 600 .env && chown deploy: .env` — this restores
-   `ENCRYPTION_KEY` and the Postgres credentials. (First copy the scripts with a deploy, or
-   `scp deploy/restore.sh`.)
-4. Deploy the last good tag (`IMAGE_TAG` in the restored `.env`): `deploy/deploy.sh deploy@… <tag>`.
-   This starts an empty, migrated database.
+3. Add the new server's deploy key to GitHub and clone (§1), then **(server)**
+   `cd /opt/time2live && sudo BACKUP_ENV_FILE=/etc/time2live/backup.env src/deploy/restore.sh --config > .env && chmod 600 .env`
+   — this restores `ENCRYPTION_KEY` and the Postgres credentials.
+4. Deploy the last good commit (`IMAGE_TAG` in the restored `.env` is its SHA prefix):
+   `deploy/deploy.sh time2live <sha>`. This builds the image and starts an empty, migrated database.
 5. `sudo ./restore.sh latest --in-place --yes`, then `curl -fsS https://time2live.xyz/healthz?deep=1`.
 
 **Test record (2026-09-29, local replica of the production stack):** production compose with
@@ -226,8 +234,8 @@ Three independent layers:
 ## 8. Telegram bot (optional)
 
 Create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` and
-`TELEGRAM_WEBHOOK_SECRET` (`openssl rand -hex 32`) in `.env`, redeploy (or
-`docker compose up -d api worker`) and register the webhook once:
+`TELEGRAM_WEBHOOK_SECRET` (`openssl rand -hex 32`) in `.env`, run
+`docker compose up -d api worker` and register the webhook once:
 `docker compose exec api node dist/bin/admin.js telegram-webhook`.
 
 ## 9. Security checklist
@@ -235,7 +243,8 @@ Create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERN
 - Only Caddy publishes ports; Postgres has no `ports:` (Docker-published ports would bypass ufw).
 - Cloud Firewall + ufw: 22/80/443 only. SSH: keys only, no root, `AllowUsers deploy`, fail2ban.
 - Secrets exist only in `/opt/time2live/.env` and `/etc/time2live/` on the server (and in your
-  password manager / GitHub encrypted secrets) — never in the repository.
+  password manager) — never in the repository. GitHub holds no credentials for the server; the
+  server's GitHub deploy key is read-only and limited to this repository.
 - Containers run as non-root with a read-only filesystem, `no-new-privileges` and all
   capabilities dropped.
 - Webhook targets are SSRF-filtered at creation and at connect time; set `SERVER_PUBLIC_IPS`.
