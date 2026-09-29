@@ -5,7 +5,9 @@ import { schema } from './db/index.js';
 import type { Account, Job, JobRun } from './db/schema.js';
 import { ApiError } from './errors.js';
 import { newId } from './ids.js';
-import { TIERS, tierFor } from './plans.js';
+import { offersFor, PaymentRequiredError } from './billing.js';
+import { chargeCredits, type Executor } from './credits.js';
+import { PRICES, TIERS, tierFor } from './plans.js';
 import { assertCron, nextCronRun, normalizeCron, ScheduleError } from './schedule.js';
 import type { TargetPolicy } from './ssrf.js';
 import { assertWebhookUrl, type Resolve } from './targets.js';
@@ -243,7 +245,21 @@ export function runLimitFor(account: Pick<Account, 'activatedAt'>): number {
   return TIERS[tierFor(account)].runsPerMonth;
 }
 
-/** Queues an immediate run outside the schedule. Counts against the monthly quota. */
+/**
+ * Uses one of this month's free runs, or else charges the run price from prepaid credits.
+ * Returns false when neither is possible.
+ */
+export async function payForRun(
+  tx: Executor,
+  account: Pick<Account, 'id' | 'activatedAt'>,
+  runId: string,
+  now: Date,
+): Promise<boolean> {
+  if (await tryConsumeRun(tx, account.id, runLimitFor(account), now)) return true;
+  return chargeCredits(tx, account.id, PRICES.runMicro, 'run', runId);
+}
+
+/** Queues an immediate run outside the schedule (a free run, or paid from credits). */
 export async function triggerJob(
   db: Db,
   account: Account,
@@ -252,13 +268,17 @@ export async function triggerJob(
 ): Promise<JobRun> {
   const job = await getJob(db, account.id, jobId);
   return db.transaction(async (tx) => {
-    if (!(await tryConsumeRun(tx, account.id, runLimitFor(account), now))) {
-      throw new ApiError(402, 'quota_exceeded', 'Monthly run quota exhausted for this account');
+    const runId = newId('run');
+    if (!(await payForRun(tx, account, runId, now))) {
+      throw new PaymentRequiredError(
+        offersFor(account),
+        'Free runs for this month are used up and the credit balance is too low',
+      );
     }
     const [run] = await tx
       .insert(schema.jobRuns)
       .values({
-        id: newId('run'),
+        id: runId,
         jobId: job.id,
         accountId: account.id,
         trigger: 'manual',

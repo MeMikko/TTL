@@ -11,8 +11,8 @@ const STALE_IN_PROGRESS_MS = 5 * 60_000;
 
 /**
  * Optional `Idempotency-Key` support for create endpoints (must run after requireAuth).
- * - First request: recorded as in-progress, executed, response stored (5xx responses are not
- *   stored so the client can retry).
+ * - First request: recorded as in-progress, executed, response stored (5xx and 402 responses
+ *   are not stored so the client can retry, e.g. with an x402 payment).
  * - Same key + same request: stored response replayed with `Idempotent-Replayed: true`.
  * - Same key + different request: 422. Same key while the first is still running: 409.
  */
@@ -91,8 +91,9 @@ export function idempotency(deps: AppDeps) {
     }
 
     // Handler errors have already been rendered by onError at this point, so c.res is final.
+    // 402 is not stored either: the client is expected to retry the same request with payment.
     const res = c.res;
-    if (res.status >= 500) {
+    if (res.status >= 500 || res.status === 402) {
       await db.delete(t).where(where);
       return;
     }

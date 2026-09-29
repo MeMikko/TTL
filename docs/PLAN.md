@@ -4,7 +4,7 @@ Scheduling and liveness ("TTL") service for autonomous AI agents. Customers are 
 agent builders and the agents themselves: an agent must be able to discover the service,
 register and pay without a human in the loop.
 
-Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ — live deployment pending server/DNS/secrets. This document is the source of truth for
+Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ (live at time2live.xyz), phase 4 (billing) ✅ — x402 enabled per environment via `X402_*`. This document is the source of truth for
 scope; update it when decisions change.
 
 ---
@@ -93,6 +93,15 @@ The worker triggers runs itself, so per-run x402 does not fit directly. **Credit
 5. Re-verify the x402 docs (headers, payload schemas, CAIP-2 network ids, `@x402/hono`) right before implementing.
 
 Default prices: $1 = 2,000 runs, $0.25 per monitor/month, packs $1 / $5 / $20.
+
+**As built (phase 4):** free runs are used first, then $0.0005/run from credits. Beyond the tier,
+a monitor is charged $0.25 up front per 30-day period (`billing = 'paid'`); an unpayable renewal
+pauses the monitor and sends a `monitor.unpaid` alert. Instead of pausing jobs at zero balance,
+unpayable scheduled runs are recorded as `skipped` (the job resumes by itself once allowance or
+credit exists). Payments are verified and settled _before_ the handler runs, on the same request
+that was answered 402. Implemented with `@x402/core` + `@x402/evm` (`x402ResourceServer`), headers
+`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE`, checked against the live
+x402.org facilitator on Base Sepolia.
 
 ## 5. Security
 

@@ -15,7 +15,7 @@ export function randomBase62(length: number): string {
   return out;
 }
 
-export type IdPrefix = 'acc' | 'key' | 'job' | 'run' | 'mon' | 'alr';
+export type IdPrefix = 'acc' | 'key' | 'job' | 'run' | 'mon' | 'alr' | 'pay';
 
 /** Prefixed public identifier, e.g. "acc_3kT9…" (22 base62 chars ≈ 131 bits). */
 export function newId(prefix: IdPrefix): string {

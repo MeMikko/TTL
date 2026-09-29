@@ -37,11 +37,16 @@ export const accounts = pgTable(
     webhookSecretEnc: text('webhook_secret_enc'),
     /** Telegram chat linked via the bot's /start deep link; receives monitor alerts. */
     telegramChatId: text('telegram_chat_id'),
-    /** Set when the one-off free-tier activation payment settles (phase 4). */
+    /** Set when the one-off free-tier activation payment (or any payment) settles. */
     activatedAt: ts('activated_at'),
+    /** Prepaid balance in micro-USDC (1 USDC = 1_000_000). Never negative. */
+    creditMicro: bigint('credit_micro', { mode: 'number' }).notNull().default(0),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
-  (t) => [check('accounts_status_check', sql`${t.status} in ('active', 'frozen')`)],
+  (t) => [
+    check('accounts_status_check', sql`${t.status} in ('active', 'frozen')`),
+    check('accounts_credit_nonnegative', sql`${t.creditMicro} >= 0`),
+  ],
 );
 
 /** Single-use SIWE challenges. The exact issued message is stored and must be signed verbatim. */
@@ -258,10 +263,18 @@ export const monitors = pgTable(
     deadSince: ts('dead_since'),
     alertWebhookUrl: text('alert_webhook_url'),
     alertTelegram: boolean('alert_telegram').notNull().default(false),
+    /** 'free' = within the tier's monitor allowance; 'paid' = charged per 30 days from credits. */
+    billing: text('billing', { enum: ['free', 'paid'] })
+      .notNull()
+      .default('free'),
+    paidUntil: ts('paid_until'),
     createdAt: ts('created_at').notNull().defaultNow(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
   (t) => [
+    index('monitors_paid_until_idx')
+      .on(t.paidUntil)
+      .where(sql`${t.billing} = 'paid'`),
     index('monitors_expiry_idx')
       .on(t.expiresAt)
       .where(sql`${t.status} = 'alive'`),
@@ -302,7 +315,7 @@ export const alertDeliveries = pgTable(
     accountId: text('account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    event: text('event', { enum: ['monitor.down', 'monitor.up'] }).notNull(),
+    event: text('event', { enum: ['monitor.down', 'monitor.up', 'monitor.unpaid'] }).notNull(),
     channel: text('channel', { enum: ['webhook', 'telegram'] }).notNull(),
     /** Snapshot of what is being reported (JSON). */
     payload: text('payload').notNull(),
@@ -338,7 +351,49 @@ export const telegramLinkTokens = pgTable('telegram_link_tokens', {
   usedAt: ts('used_at'),
 });
 
+/** Append-only audit trail of every balance change (the balance itself is accounts.credit_micro). */
+export const creditsLedger = pgTable(
+  'credits_ledger',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    deltaMicro: bigint('delta_micro', { mode: 'number' }).notNull(),
+    /** topup | run | monitor_month */
+    reason: text('reason').notNull(),
+    /** Related object: payment id, run id or monitor id. */
+    ref: text('ref'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('credits_ledger_account_idx').on(t.accountId, t.createdAt)],
+);
+
+/** Settled x402 payments. (network, transaction) is unique: a payment is credited at most once. */
+export const payments = pgTable(
+  'payments',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    /** activation | credits */
+    product: text('product').notNull(),
+    amountMicro: bigint('amount_micro', { mode: 'number' }).notNull(),
+    network: text('network').notNull(),
+    asset: text('asset').notNull(),
+    payer: text('payer'),
+    transaction: text('transaction').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('payments_tx_idx').on(t.network, t.transaction),
+    index('payments_account_idx').on(t.accountId, t.createdAt),
+  ],
+);
+
 export type Account = typeof accounts.$inferSelect;
+export type Payment = typeof payments.$inferSelect;
 export type Monitor = typeof monitors.$inferSelect;
 export type MonitorEvent = typeof monitorEvents.$inferSelect;
 export type AlertDelivery = typeof alertDeliveries.$inferSelect;

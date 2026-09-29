@@ -1,7 +1,7 @@
 import { createRoute, z } from '@hono/zod-openapi';
 import { parseEncryptionKey } from '../../core/crypto.js';
 import { SIGNATURE_HEADER } from '../../core/hmac.js';
-import { TIERS, tierFor } from '../../core/plans.js';
+import { TIERS, tierFor, usd } from '../../core/plans.js';
 import { periodOf, runsUsed } from '../../core/usage.js';
 import { getOrCreateWebhookSecret, rotateWebhookSecret } from '../../core/webhook-secret.js';
 import type { AppDeps } from '../context.js';
@@ -30,6 +30,7 @@ const getAccountRoute = createRoute({
               activatedAt: z.iso.datetime().nullable(),
               tier: z.object({ name: z.enum(['unactivated', 'free']), limits: LimitsSchema }),
               usage: z.object({ period: z.string(), runs: z.number().int() }),
+              credits: z.object({ balanceMicro: z.number().int(), balanceUsd: z.string() }),
               telegram: z.object({ linked: z.boolean() }),
             })
             .openapi('Account'),
@@ -113,6 +114,7 @@ export function accountRoutes(deps: AppDeps) {
         activatedAt: a.activatedAt?.toISOString() ?? null,
         tier: { name: tier, limits: { ...TIERS[tier] } },
         usage: { period: periodOf(t), runs: await runsUsed(db, a.id, t) },
+        credits: { balanceMicro: a.creditMicro, balanceUsd: usd(a.creditMicro) },
         telegram: { linked: a.telegramChatId !== null },
       },
       200,

@@ -94,6 +94,7 @@ export function serializeMonitor(m: Monitor, publicBaseUrl: string) {
     expiresAt: iso(m.expiresAt),
     deadSince: iso(m.deadSince),
     alerts: { webhookUrl: m.alertWebhookUrl, telegram: m.alertTelegram },
+    billing: { plan: m.billing, paidUntil: iso(m.paidUntil) },
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),
   };
@@ -103,7 +104,7 @@ export function serializeMonitorEvent(e: MonitorEvent) {
   return {
     from: e.fromStatus,
     to: e.toStatus,
-    reason: e.reason as 'ping' | 'timeout' | 'pause' | 'resume',
+    reason: e.reason as 'ping' | 'timeout' | 'pause' | 'resume' | 'unpaid',
     at: e.at.toISOString(),
   };
 }

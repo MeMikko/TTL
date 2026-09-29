@@ -4,7 +4,7 @@ import { parseEncryptionKey } from '../core/crypto.js';
 import type { Database } from '../core/db/index.js';
 import type { Logger } from '../core/logger.js';
 import { RateLimiter } from '../core/rate-limit.js';
-import { sweepExpiredMonitors } from '../core/monitors.js';
+import { renewPaidMonitors, sweepExpiredMonitors } from '../core/monitors.js';
 import { createTelegramClient, type TelegramClient } from '../core/telegram.js';
 import { claimAlerts, processAlert, type AlertDeps } from './alerts.js';
 import { cleanupExpired } from './cleanup.js';
@@ -118,6 +118,11 @@ export function createWorker(deps: WorkerDeps): Worker {
   }
 
   async function monitorPass() {
+    for (let i = 0; i < 10; i++) {
+      const r = await renewPaidMonitors(db, new Date());
+      if (r.renewed || r.paused) logger.info(r, 'paid monitors renewed');
+      if (r.renewed + r.paused < 100) break;
+    }
     for (let i = 0; i < 10; i++) {
       const r = await sweepExpiredMonitors(db, new Date());
       if (r.died) logger.info(r, 'monitors marked dead');

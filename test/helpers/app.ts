@@ -32,6 +32,7 @@ export function buildApp(
     smartWalletVerifier?: SmartWalletVerifier;
     dnsResolve?: AppDeps['dnsResolve'];
     telegram?: AppDeps['telegram'];
+    payments?: AppDeps['payments'];
   } = {},
 ) {
   return createApp({
@@ -42,5 +43,6 @@ export function buildApp(
     smartWalletVerifier: opts.smartWalletVerifier,
     dnsResolve: opts.dnsResolve,
     telegram: opts.telegram,
+    payments: opts.payments,
   });
 }

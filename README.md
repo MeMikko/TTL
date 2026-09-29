@@ -105,7 +105,51 @@ curl -fsS -X POST http://localhost:3000/v1/heartbeat/mon_…
 - Telegram: `POST /v1/account/telegram/link` returns a `t.me` deep link; press Start in
   Telegram to link the chat, send `/stop` to unlink. Operators must set `TELEGRAM_BOT_TOKEN`,
   `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` and run `admin telegram-webhook` once.
-- Tiers: 1 monitor before activation, 3 after (`402 quota_exceeded` beyond that).
+- Tiers: 1 monitor before activation, 3 after. Further monitors cost $0.25 per 30 days from
+  credits (`billing.plan = "paid"`); when a renewal cannot be paid the monitor is paused and a
+  `monitor.unpaid` alert is sent.
+
+## Billing (x402)
+
+| What                        | Price                                                                  |
+| --------------------------- | ---------------------------------------------------------------------- |
+| Activation (one-off)        | $0.10 — raises the free tier from 1 monitor + 50 runs/month to 3 + 100 |
+| Run beyond the monthly free | $0.0005 from credits ($1 = 2,000 runs)                                 |
+| Monitor beyond the tier     | $0.25 per 30 days from credits                                         |
+| Credit packs                | $1, $5, $20                                                            |
+
+Payments use [x402](https://x402.org) v2 (USDC on Base; Base Sepolia while testing), so an agent
+pays without a human. Any call that needs money — `POST /v1/monitors`, `POST /v1/monitors/{id}/resume`,
+`POST /v1/jobs/{id}/trigger`, `POST /v1/billing/activate`, `POST /v1/billing/credits` — answers
+`402` with a `PAYMENT-REQUIRED` header (cheapest offer first; the body carries the same JSON plus
+`error`). Sign one offer with an x402 client and retry the **same request** with
+`PAYMENT-SIGNATURE`: the payment is settled, activation/credits applied and the request completes
+in one round trip; the receipt comes back in `PAYMENT-RESPONSE`. Any payment also activates the
+free tier. A settlement is credited at most once (unique transaction), and 402s are never stored
+under an `Idempotency-Key`, so retrying with the same key works.
+
+```ts
+import { wrapFetchWithPayment } from '@x402/fetch';
+import { x402Client } from '@x402/core/client';
+import { ExactEvmScheme } from '@x402/evm/exact/client';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const client = new x402Client().register(
+  'eip155:84532',
+  new ExactEvmScheme(privateKeyToAccount(PK)),
+);
+const pay = wrapFetchWithPayment(fetch, client);
+await pay('https://time2live.xyz/v1/billing/credits', {
+  method: 'POST',
+  headers: { authorization: `Bearer ${T2L_KEY}`, 'content-type': 'application/json' },
+  body: JSON.stringify({ pack: 1 }),
+});
+```
+
+x402 SDKs cap a single payment at $1 by default; raise `maxAmountPerPayment` for the $5/$20
+packs. `GET /v1/billing` shows balance, tier and prices, `GET /v1/billing/payments` the settled
+payments. Scheduled runs that cannot be paid are recorded as `skipped` (the job keeps its
+schedule and resumes producing runs as soon as there is allowance or credit).
 
 ## Admin
 

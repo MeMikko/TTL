@@ -140,7 +140,10 @@ describe('scheduler', () => {
     );
     expect(await scheduleDueJobs(db, at(5 * 60_000))).toEqual({ queued: 0, skipped: 1 });
     const [run] = await runsOf(job.id);
-    expect(run).toMatchObject({ status: 'skipped', lastError: 'monthly run quota exhausted' });
+    expect(run).toMatchObject({
+      status: 'skipped',
+      lastError: 'monthly run quota exhausted and credit balance too low',
+    });
   });
 
   it('does not create runs for frozen accounts but keeps the schedule moving', async () => {
