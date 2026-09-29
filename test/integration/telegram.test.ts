@@ -109,6 +109,19 @@ describe('Telegram linking', () => {
   it('requires username and secret alongside the bot token', () => {
     expect(() => testConfig({ TELEGRAM_BOT_TOKEN: 'x' })).toThrow(/TELEGRAM_BOT_USERNAME/);
   });
+
+  it('accepts the bot username with the "@" BotFather shows, and rejects junk', () => {
+    const base = { TELEGRAM_BOT_TOKEN: 'x', TELEGRAM_WEBHOOK_SECRET: SECRET };
+    expect(
+      testConfig({ ...base, TELEGRAM_BOT_USERNAME: '@time2live_bot' }).TELEGRAM_BOT_USERNAME,
+    ).toBe('time2live_bot');
+    expect(
+      testConfig({ ...base, TELEGRAM_BOT_USERNAME: ' time2live_bot ' }).TELEGRAM_BOT_USERNAME,
+    ).toBe('time2live_bot');
+    expect(() => testConfig({ ...base, TELEGRAM_BOT_USERNAME: 'https://t.me/x' })).toThrow(
+      /TELEGRAM_BOT_USERNAME/,
+    );
+  });
 });
 
 describe('Telegram API client', () => {

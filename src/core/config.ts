@@ -68,7 +68,17 @@ const envSchema = z
 
     /** Telegram alerts are enabled when the bot token is set. */
     TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
-    TELEGRAM_BOT_USERNAME: z.string().min(1).optional(),
+    /** Bot username; BotFather shows it as "@name", the leading "@" is accepted and removed. */
+    TELEGRAM_BOT_USERNAME: z
+      .string()
+      .trim()
+      .transform((s) => s.replace(/^@/, ''))
+      .pipe(
+        z
+          .string()
+          .regex(/^[A-Za-z0-9_]{5,32}$/, 'must be a Telegram bot username, e.g. time2live_bot'),
+      )
+      .optional(),
     /** Shared secret Telegram echoes in X-Telegram-Bot-Api-Secret-Token on webhook calls. */
     TELEGRAM_WEBHOOK_SECRET: z
       .string()
