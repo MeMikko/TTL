@@ -127,11 +127,14 @@ const routes = {
     path: '/v1/monitors/{id}/resume',
     tags: ['monitors'],
     summary: 'Resume a monitor; a fresh TTL window starts now',
+    description:
+      'A paid monitor whose 30-day period has ended is charged again from credits; without ' +
+      'enough credits the answer is an x402 `402` challenge.',
     security,
     request: { params: monIdParam },
     responses: {
       200: { description: 'Monitor', content: jsonContent(MonitorSchema) },
-      ...errorResponses(400, 401, 403, 404, 429),
+      ...errorResponses(400, 401, 402, 403, 404, 429),
     },
   }),
   events: createRoute({
@@ -274,10 +277,7 @@ export function monitorRoutes(deps: AppDeps) {
   );
 
   app.openapi(routes.resume, async (c) =>
-    c.json(
-      render(await resumeMonitor(db, c.get('account').id, c.req.valid('param').id, now())),
-      200,
-    ),
+    c.json(render(await resumeMonitor(db, c.get('account'), c.req.valid('param').id, now())), 200),
   );
 
   app.openapi(routes.events, async (c) => {

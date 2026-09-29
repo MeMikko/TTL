@@ -86,10 +86,31 @@ const envSchema = z
       .optional(),
     TELEGRAM_API_BASE: z.url().default('https://api.telegram.org'),
 
+    /** x402 payments. Disabled: quotas still apply, over-quota calls get a plain 402. */
+    X402_ENABLED: z.stringbool().default(false),
+    /** CAIP-2 network: eip155:84532 (Base Sepolia, testnet) or eip155:8453 (Base mainnet). */
+    X402_NETWORK: z.enum(['eip155:84532', 'eip155:8453']).default('eip155:84532'),
+    /** Address receiving USDC payments. */
+    X402_PAY_TO: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 0x-prefixed EVM address')
+      .optional(),
+    /** The public x402.org facilitator supports testnets only; mainnet needs another one. */
+    X402_FACILITATOR_URL: z.url().default('https://x402.org/facilitator'),
+    /** Optional "Authorization" header value for facilitators that require one. */
+    X402_FACILITATOR_AUTHORIZATION: z.string().min(1).optional(),
+
     /** Dogfooding: the worker pings this heartbeat URL on every tick (see docs/OPERATIONS.md). */
     SELF_HEARTBEAT_URL: z.url().optional(),
   })
   .superRefine((cfg, ctx) => {
+    if (cfg.X402_ENABLED && !cfg.X402_PAY_TO) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['X402_PAY_TO'],
+        message: 'required when X402_ENABLED',
+      });
+    }
     if (cfg.TELEGRAM_BOT_TOKEN && (!cfg.TELEGRAM_BOT_USERNAME || !cfg.TELEGRAM_WEBHOOK_SECRET)) {
       ctx.addIssue({
         code: 'custom',

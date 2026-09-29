@@ -253,6 +253,27 @@ Create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERN
 `docker compose up -d api worker` and register the webhook once:
 `docker compose exec api node dist/bin/admin.js telegram-webhook`.
 
+## 8b. Payments (x402)
+
+Payments are off until `X402_ENABLED=true`. Start on **Base Sepolia**:
+
+```sh
+# .env
+X402_ENABLED=true
+X402_NETWORK=eip155:84532
+X402_PAY_TO=0x…          # wallet that receives USDC; keep its key off the server
+```
+
+`docker compose up -d api worker`, then check `GET /v1/billing` (with an API key) shows
+`x402.enabled: true`. Test end to end with a wallet holding Sepolia USDC (Circle faucet): a
+second monitor on a fresh account must return 402 and succeed after paying $0.10.
+
+**Mainnet:** the public `https://x402.org/facilitator` supports testnets only. Use a mainnet
+facilitator (e.g. Coinbase CDP) and set `X402_NETWORK=eip155:8453`, `X402_FACILITATOR_URL` and,
+if it needs one, `X402_FACILITATOR_AUTHORIZATION` (sent as the `Authorization` header).
+Payments are recorded in `payments`, balance movements in `credits_ledger`
+(`npm run admin -- show` shows the balance).
+
 ## 9. Security checklist
 
 - Only Caddy publishes ports; Postgres has no `ports:` (Docker-published ports would bypass ufw).

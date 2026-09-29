@@ -4,7 +4,9 @@ import { schema } from './db/index.js';
 import type { Account, Monitor, MonitorStatus } from './db/schema.js';
 import { ApiError } from './errors.js';
 import { newId } from './ids.js';
-import { TIERS, tierFor } from './plans.js';
+import { offersFor, PaymentRequiredError } from './billing.js';
+import { chargeCredits } from './credits.js';
+import { MONITOR_BILLING_PERIOD_MS, PRICES, TIERS, tierFor, usd } from './plans.js';
 import type { TargetPolicy } from './ssrf.js';
 import { assertWebhookUrl, type Resolve } from './targets.js';
 
@@ -27,7 +29,7 @@ export interface MonitorInput {
   alertTelegram: boolean;
 }
 
-export type MonitorEventName = 'monitor.down' | 'monitor.up';
+export type MonitorEventName = 'monitor.down' | 'monitor.up' | 'monitor.unpaid';
 
 const expiry = (m: Pick<Monitor, 'ttlSeconds' | 'graceSeconds'>, from: Date) =>
   new Date(from.getTime() + (m.ttlSeconds + m.graceSeconds) * 1000);
@@ -59,6 +61,12 @@ export function alertText(p: AlertPayload): string {
       `🔴 Monitor "${m.name}" is DOWN\n` +
       `No ping within ${m.ttlSeconds + m.graceSeconds}s (TTL ${m.ttlSeconds}s + grace ${m.graceSeconds}s).\n` +
       `Last ping: ${m.lastPingAt ?? 'never'}\nID: ${m.id}`
+    );
+  }
+  if (p.event === 'monitor.unpaid') {
+    return (
+      `⏸ Monitor "${m.name}" was PAUSED: its 30-day period ended and the credit balance is too low.\n` +
+      `It is no longer watched. Buy credits (POST /v1/billing/credits) and resume it.\nID: ${m.id}`
     );
   }
   return `🟢 Monitor "${m.name}" is back UP\nDown since: ${m.deadSince ?? 'unknown'}\nID: ${m.id}`;
@@ -113,33 +121,113 @@ export async function createMonitor(
   input: MonitorInput,
   now: Date,
 ): Promise<Monitor> {
-  const limit = TIERS[tierFor(account)].monitors;
-  const [{ n } = { n: 0 }] = await deps.db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(schema.monitors)
-    .where(eq(schema.monitors.accountId, account.id));
-  if (n >= limit) {
-    throw new ApiError(402, 'quota_exceeded', `Your tier allows ${limit} monitor(s)`);
-  }
   const alertWebhookUrl = input.alertWebhookUrl
     ? await assertWebhookUrl(deps.policy, input.alertWebhookUrl, deps.resolve)
     : null;
-  const [row] = await deps.db
-    .insert(schema.monitors)
-    .values({
-      id: newId('mon'),
-      accountId: account.id,
-      name: input.name,
-      ttlSeconds: input.ttlSeconds,
-      graceSeconds: input.graceSeconds,
-      status: 'new',
-      alertWebhookUrl,
-      alertTelegram: input.alertTelegram,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
-  return row!;
+  const limit = TIERS[tierFor(account)].monitors;
+  return deps.db.transaction(async (tx) => {
+    // Serialise per account so two concurrent creates cannot both take the last free slot.
+    await tx
+      .select({ id: schema.accounts.id })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .for('update');
+    const [{ n } = { n: 0 }] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.monitors)
+      .where(and(eq(schema.monitors.accountId, account.id), eq(schema.monitors.billing, 'free')));
+    const id = newId('mon');
+    let billing: 'free' | 'paid' = 'free';
+    let paidUntil: Date | null = null;
+    if (n >= limit) {
+      if (!(await chargeCredits(tx, account.id, PRICES.monitorMonthMicro, 'monitor_month', id))) {
+        throw new PaymentRequiredError(
+          offersFor(account),
+          `Your tier includes ${limit} monitor(s); each extra monitor costs ${usd(PRICES.monitorMonthMicro)} per 30 days from credits`,
+        );
+      }
+      billing = 'paid';
+      paidUntil = new Date(now.getTime() + MONITOR_BILLING_PERIOD_MS);
+    }
+    const [row] = await tx
+      .insert(schema.monitors)
+      .values({
+        id,
+        accountId: account.id,
+        name: input.name,
+        ttlSeconds: input.ttlSeconds,
+        graceSeconds: input.graceSeconds,
+        status: 'new',
+        alertWebhookUrl,
+        alertTelegram: input.alertTelegram,
+        billing,
+        paidUntil,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    return row!;
+  });
+}
+
+/**
+ * Worker: renews paid monitors whose 30-day period ended, charging credits. Monitors that
+ * cannot be renewed are paused (with an 'unpaid' event); resuming them later tries again.
+ */
+export async function renewPaidMonitors(
+  db: Db,
+  now: Date,
+  batchSize = 100,
+): Promise<{ renewed: number; paused: number }> {
+  return db.transaction(async (tx) => {
+    const due = await tx
+      .select({ monitor: schema.monitors, account: schema.accounts })
+      .from(schema.monitors)
+      .innerJoin(schema.accounts, eq(schema.accounts.id, schema.monitors.accountId))
+      .where(
+        and(
+          eq(schema.monitors.billing, 'paid'),
+          sql`${schema.monitors.paidUntil} <= ${now}`,
+          sql`${schema.monitors.status} <> 'paused'`,
+          eq(schema.accounts.status, 'active'),
+        ),
+      )
+      .limit(batchSize)
+      .for('update', { of: schema.monitors, skipLocked: true });
+    let renewed = 0;
+    let paused = 0;
+    for (const { monitor, account } of due) {
+      const next = new Date(monitor.paidUntil!.getTime() + MONITOR_BILLING_PERIOD_MS);
+      if (
+        await chargeCredits(
+          tx,
+          monitor.accountId,
+          PRICES.monitorMonthMicro,
+          'monitor_month',
+          monitor.id,
+        )
+      ) {
+        await tx
+          .update(schema.monitors)
+          .set({
+            paidUntil: next > now ? next : new Date(now.getTime() + MONITOR_BILLING_PERIOD_MS),
+          })
+          .where(eq(schema.monitors.id, monitor.id));
+        renewed++;
+      } else {
+        await recordEvent(tx, monitor.id, monitor.status, 'paused', 'unpaid', now);
+        const [row] = await tx
+          .update(schema.monitors)
+          .set({ status: 'paused', expiresAt: null, updatedAt: now })
+          .where(eq(schema.monitors.id, monitor.id))
+          .returning();
+        // Silence would be the worst outcome for a dead man's switch: tell the owner.
+        await enqueueAlerts(tx, row!, account, 'monitor.unpaid', now);
+        paused++;
+      }
+    }
+    return { renewed, paused };
+  });
 }
 
 export async function getMonitor(db: Db, accountId: string, id: string): Promise<Monitor> {
@@ -215,14 +303,31 @@ export async function pauseMonitor(db: Db, accountId: string, id: string, now: D
 }
 
 /** Resuming starts a fresh TTL window from now (the agent may have kept pinging while paused). */
-export async function resumeMonitor(db: Db, accountId: string, id: string, now: Date) {
-  const m = await getMonitor(db, accountId, id);
+export async function resumeMonitor(db: Db, account: Account, id: string, now: Date) {
+  const m = await getMonitor(db, account.id, id);
   if (m.status !== 'paused') return m;
   return db.transaction(async (tx) => {
+    let paidUntil = m.paidUntil;
+    // A paid monitor whose period ended (e.g. paused for lack of credits) starts a new period.
+    if (m.billing === 'paid' && (!paidUntil || paidUntil <= now)) {
+      if (!(await chargeCredits(tx, account.id, PRICES.monitorMonthMicro, 'monitor_month', m.id))) {
+        throw new PaymentRequiredError(
+          offersFor(account),
+          `Resuming this monitor costs ${usd(PRICES.monitorMonthMicro)} per 30 days from credits`,
+        );
+      }
+      paidUntil = new Date(now.getTime() + MONITOR_BILLING_PERIOD_MS);
+    }
     await recordEvent(tx, m.id, 'paused', 'alive', 'resume', now);
     const [row] = await tx
       .update(schema.monitors)
-      .set({ status: 'alive', expiresAt: expiry(m, now), deadSince: null, updatedAt: now })
+      .set({
+        status: 'alive',
+        expiresAt: expiry(m, now),
+        deadSince: null,
+        paidUntil,
+        updatedAt: now,
+      })
       .where(eq(schema.monitors.id, m.id))
       .returning();
     return row!;

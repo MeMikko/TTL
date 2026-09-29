@@ -2,10 +2,9 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../core/db/index.js';
 import { schema } from '../core/db/index.js';
 import { newId } from '../core/ids.js';
-import { runLimitFor } from '../core/jobs.js';
+import { payForRun } from '../core/jobs.js';
 import type { Logger } from '../core/logger.js';
 import { nextCronRun } from '../core/schedule.js';
-import { tryConsumeRun } from '../core/usage.js';
 
 export interface SchedulerResult {
   queued: number;
@@ -53,31 +52,41 @@ export async function scheduleDueJobs(
 
       // Frozen accounts: advance the schedule silently, no runs and no quota use.
       if (job.account_status === 'active') {
-        const allowed = await tryConsumeRun(
-          tx,
-          job.account_id,
-          runLimitFor({ activatedAt: job.activated_at }),
-          now,
-        );
+        // Insert first, pay second: an occurrence that already exists is never charged twice.
+        const runId = newId('run');
         const inserted = await tx
           .insert(schema.jobRuns)
           .values({
-            id: newId('run'),
+            id: runId,
             jobId: job.id,
             accountId: job.account_id,
             trigger: 'schedule',
             scheduledFor,
-            status: allowed ? 'pending' : 'skipped',
+            status: 'pending',
             maxAttempts: job.max_attempts,
-            nextAttemptAt: allowed ? now : null,
-            lastError: allowed ? null : 'monthly run quota exhausted',
-            finishedAt: allowed ? null : now,
+            nextAttemptAt: now,
             createdAt: now,
           })
           .onConflictDoNothing()
           .returning({ id: schema.jobRuns.id });
-        if (inserted.length && allowed) queued++;
-        else skipped++;
+        if (inserted.length === 0) {
+          skipped++;
+        } else if (
+          await payForRun(tx, { id: job.account_id, activatedAt: job.activated_at }, runId, now)
+        ) {
+          queued++;
+        } else {
+          await tx
+            .update(schema.jobRuns)
+            .set({
+              status: 'skipped',
+              nextAttemptAt: null,
+              finishedAt: now,
+              lastError: 'monthly run quota exhausted and credit balance too low',
+            })
+            .where(sql`${schema.jobRuns.id} = ${runId}`);
+          skipped++;
+        }
       }
 
       let next: Date | null = null;

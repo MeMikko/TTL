@@ -297,6 +297,16 @@ export const MonitorSchema = z
     expiresAt: z.iso.datetime().nullable(),
     deadSince: z.iso.datetime().nullable(),
     alerts: z.object({ webhookUrl: z.string().nullable(), telegram: z.boolean() }),
+    billing: z
+      .object({
+        plan: z.enum(['free', 'paid']),
+        paidUntil: z.iso.datetime().nullable(),
+      })
+      .openapi({
+        description:
+          'free = within the tier allowance; paid = charged from credits every 30 days ' +
+          '(paused with reason `unpaid` when the balance runs out).',
+      }),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
@@ -306,7 +316,7 @@ export const MonitorEventSchema = z
   .object({
     from: z.string(),
     to: z.string(),
-    reason: z.enum(['ping', 'timeout', 'pause', 'resume']),
+    reason: z.enum(['ping', 'timeout', 'pause', 'resume', 'unpaid']),
     at: z.iso.datetime(),
   })
   .openapi('MonitorEvent');
