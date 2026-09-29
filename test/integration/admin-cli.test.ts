@@ -71,3 +71,35 @@ describe('admin create-monitor', () => {
     });
   }, 60_000);
 });
+
+describe('admin telegram-link', () => {
+  it('prints a one-time bot link for the account', async () => {
+    const wallet = newWallet();
+    await findOrCreateAccount(database.db, wallet.address);
+    const out = await run('npx', ['tsx', 'src/bin/admin.ts', 'telegram-link', wallet.address], {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
+        TELEGRAM_BOT_TOKEN: '123:abc',
+        TELEGRAM_BOT_USERNAME: 'time2live_bot',
+        TELEGRAM_WEBHOOK_SECRET: 'secret-secret-secret',
+      },
+    });
+    const token = /https:\/\/t\.me\/time2live_bot\?start=([0-9A-Za-z]{32})/.exec(out.stdout)?.[1];
+    expect(token).toBeDefined();
+    const { rows } = await database.pool.query(
+      'select used_at from telegram_link_tokens where token = $1',
+      [token],
+    );
+    expect(rows).toEqual([{ used_at: null }]);
+  }, 60_000);
+
+  it('fails clearly when Telegram is not configured', async () => {
+    const wallet = newWallet();
+    await findOrCreateAccount(database.db, wallet.address);
+    await expect(admin('telegram-link', wallet.address)).rejects.toMatchObject({
+      stderr: expect.stringContaining('Telegram is not configured'),
+    });
+  }, 60_000);
+});

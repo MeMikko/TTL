@@ -238,9 +238,9 @@ Three independent layers:
    ```
 
    Put the first ping URL into `.env` as `SELF_HEARTBEAT_URL` (the worker pings it on every
-   tick) and the second into `/etc/time2live/backup.env` as `BACKUP_HEARTBEAT_URL`. Sign in
-   with the same wallet (README) and call `POST /v1/account/telegram/link` to receive the alerts
-   in Telegram (or set `alerts.webhookUrl` on the monitors). This catches a stuck delivery
+   tick) and the second into `/etc/time2live/backup.env` as `BACKUP_HEARTBEAT_URL`. To receive the alerts in Telegram (§8), print a link with
+   `docker compose exec api node dist/bin/admin.js telegram-link 0xYOUR_WALLET`, open it and press
+   Start (or set `alerts.webhookUrl` on the monitors). This catches a stuck delivery
    queue, broken outbound networking or a failed nightly backup.
 
 3. **Logs:** `docker compose logs` (JSON, rotated 10 MB × 5 per container). Caddy access logs

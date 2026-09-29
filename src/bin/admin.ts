@@ -9,6 +9,7 @@ import {
 import { loadConfig, type Config } from '../core/config.js';
 import { createDatabase, schema, type Db } from '../core/db/index.js';
 import { newId } from '../core/ids.js';
+import { createLinkToken } from '../core/telegram-link.js';
 import { createTelegramClient } from '../core/telegram.js';
 
 const USAGE = `Usage: admin <command> [options]
@@ -18,6 +19,8 @@ Commands:
   freeze   <accountId|address> --reason "<text>"  Freeze an account (API 403, jobs stop, no alerts)
   unfreeze <accountId|address>                    Unfreeze an account
   telegram-webhook                                 Register <PUBLIC_BASE_URL>/telegram/webhook with Telegram
+  telegram-link <accountId|address>                Print a one-time t.me link that connects a Telegram
+                                                   chat to the account (no API key needed)
   create-monitor <address> --name <n> --ttl <s> [--grace <s>] [--telegram]
                                                    Operator monitor (bypasses tier limits; creates
                                                    the account if needed). Prints the ping URL.
@@ -81,7 +84,7 @@ async function createOperatorMonitor(db: Db, config: Config, address: string) {
   console.log(`Ping URL: ${config.PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/heartbeat/${monitor!.id}`);
 }
 
-async function accountCommand(db: Db, cmd: string, idOrAddress: string) {
+async function accountCommand(db: Db, config: Config, cmd: string, idOrAddress: string) {
   const account = await findAccount(db, idOrAddress);
   if (!account) throw new Error(`No account found for ${idOrAddress}`);
 
@@ -100,6 +103,15 @@ async function accountCommand(db: Db, cmd: string, idOrAddress: string) {
       console.log(`Unfrozen ${updated.id} (${updated.walletAddress})`);
       break;
     }
+    case 'telegram-link': {
+      if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_BOT_USERNAME) {
+        throw new Error('Telegram is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME)');
+      }
+      const { token, expiresAt } = await createLinkToken(db, account.id, new Date());
+      console.log(`Open within 15 minutes (until ${expiresAt.toISOString()}) and press Start:`);
+      console.log(`https://t.me/${config.TELEGRAM_BOT_USERNAME}?start=${token}`);
+      break;
+    }
     default:
       throw new Error(`Unknown command: ${cmd}\n\n${USAGE}`);
   }
@@ -111,7 +123,7 @@ const database = createDatabase(config.DATABASE_URL, 1);
 try {
   if (command === 'telegram-webhook') await registerTelegramWebhook(config);
   else if (command === 'create-monitor') await createOperatorMonitor(database.db, config, target!);
-  else await accountCommand(database.db, command!, target!);
+  else await accountCommand(database.db, config, command!, target!);
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;
