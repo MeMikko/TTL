@@ -33,5 +33,27 @@ describe('GET /openapi.json', () => {
     );
     expect(doc.components.securitySchemes.bearerAuth).toBeDefined();
     expect(Object.keys(doc.paths)).not.toContain('/telegram/webhook');
+    expect(Object.keys(doc.paths)).toEqual(
+      expect.arrayContaining(['/v1/billing', '/v1/billing/activate', '/v1/billing/credits']),
+    );
+  });
+
+  it('tags every operation and documents the x402 challenge', async () => {
+    const doc = (await (await buildApp(database).request('/openapi.json')).json()) as {
+      tags: Array<{ name: string }>;
+      paths: Record<
+        string,
+        Record<string, { tags: string[]; responses: Record<string, { headers?: object }> }>
+      >;
+    };
+    const declared = new Set(doc.tags.map((t) => t.name));
+    for (const [path, ops] of Object.entries(doc.paths)) {
+      for (const [method, op] of Object.entries(ops)) {
+        expect(op.tags, `${method} ${path}`).toHaveLength(1);
+        expect(declared.has(op.tags[0]!), `${method} ${path}`).toBe(true);
+      }
+    }
+    const create = doc.paths['/v1/monitors']!.post!;
+    expect(create.responses['402']!.headers).toHaveProperty('PAYMENT-REQUIRED');
   });
 });
