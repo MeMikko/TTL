@@ -105,7 +105,9 @@ contract DeadMansSwitchTest is Test {
     function test_reasonStringAndOverloads() public {
         vm.prank(owner);
         DeadMansSwitch custom = DeadMansSwitch(
-            factory.createSwitch(agent, beneficiary, TTL, new address[](0), bytes32("custom_reason"), "agent sentinel heartbeat")
+            factory.createSwitch(
+                agent, beneficiary, TTL, new address[](0), bytes32("custom_reason"), "agent sentinel heartbeat"
+            )
         );
         assertEq(custom.reason(), "agent sentinel heartbeat");
         assertEq(sw.reason(), "");
