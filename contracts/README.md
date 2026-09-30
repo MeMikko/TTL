@@ -105,19 +105,25 @@ Slither excludes five detectors that are inherent to the design and reviewed:
 
 ## Deploy
 
-The factory goes through the deterministic CREATE2 deployer, so its address is the same on
-every chain.
-
 ```sh
 cast wallet import deployer --interactive          # once; stores an encrypted keystore
 forge script script/Deploy.s.sol --rpc-url base_sepolia --account deployer --broadcast \
   --verify --etherscan-api-key "$ETHERSCAN_API_KEY"
 ```
 
-The script prints `KEEPER_FACTORY_ADDRESS` (the real deterministic CREATE2 address — under
-`--broadcast` this differs from the address shown in simulation, so trust this printed line) and
-`KEEPER_FROM_BLOCK`. Set both for the keeper (see `docs/OPERATIONS.md`), and verify the address
-with `cast call <addr> "totalSwitches()(uint256)" --rpc-url base_sepolia` (expect `0`).
+**Take the factory address from the broadcast output, not from a script log line.** For a salted
+deploy the address foundry computes in simulation does not reliably match the real on-chain address,
+so the script deliberately prints only a simulation value. The authoritative address is the
+`Contract Address:` line under `##### base-sepolia` in the broadcast output (also saved in
+`broadcast/Deploy.s.sol/<chainid>/run-latest.json`). Set the keeper env from it (see
+`docs/OPERATIONS.md`):
+
+- `KEEPER_FACTORY_ADDRESS` = that `Contract Address`
+- `KEEPER_FROM_BLOCK` = the `Block:` the deploy transaction landed in
+
+Confirm it is the factory with `cast call <addr> "totalSwitches()(uint256)" --rpc-url base_sepolia`
+(expect `0`). Record the address per chain — deploy once per chain and use the address the broadcast
+reports.
 
 ### Verify on the block explorer
 
