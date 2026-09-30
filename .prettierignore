@@ -2,5 +2,6 @@ dist
 node_modules
 drizzle
 contracts/lib
+contracts/broadcast
 coverage
 package-lock.json
