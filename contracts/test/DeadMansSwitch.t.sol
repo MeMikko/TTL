@@ -100,6 +100,112 @@ contract DeadMansSwitchTest is Test {
         vm.stopPrank();
     }
 
+    // ---- reason & factory registry ------------------------------------------------------------
+
+    function test_reasonStringAndOverloads() public {
+        vm.prank(owner);
+        DeadMansSwitch custom = DeadMansSwitch(
+            factory.createSwitch(agent, beneficiary, TTL, new address[](0), bytes32("custom_reason"), "agent sentinel heartbeat")
+        );
+        assertEq(custom.reason(), "agent sentinel heartbeat");
+        assertEq(sw.reason(), "");
+    }
+
+    function test_factoryRegistry() public {
+        address[] memory ownerList = factory.getSwitchesByOwner(owner);
+        assertEq(ownerList.length, 1);
+        assertEq(ownerList[0], address(sw));
+        assertEq(factory.getSwitchCountByOwner(owner), 1);
+        assertEq(factory.getSwitchCountByOwner(stranger), 0);
+
+        vm.prank(stranger);
+        address s2 = factory.createSwitch(agent, beneficiary, TTL, new address[](0), bytes32("s2"));
+
+        assertEq(factory.getSwitchCountByOwner(stranger), 1);
+        assertEq(factory.getSwitchesByOwner(stranger)[0], s2);
+        assertEq(factory.totalSwitches(), 2);
+        assertEq(factory.getAllSwitches().length, 2);
+    }
+
+    // ---- mutual cancellation ------------------------------------------------------------------
+
+    function test_mutualCancelWorkflow() public {
+        assertFalse(sw.cancelProposed());
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, false, address(sw));
+        emit DeadMansSwitch.CancelProposed();
+        sw.proposeCancel();
+        assertTrue(sw.cancelProposed());
+
+        uint256 ownerEthBefore = owner.balance;
+        uint256 ownerTokenBefore = token.balanceOf(owner);
+
+        vm.prank(beneficiary);
+        vm.expectEmit(true, false, false, false, address(sw));
+        emit DeadMansSwitch.Cancelled(beneficiary);
+        sw.approveCancel();
+
+        assertTrue(sw.triggered());
+        assertFalse(sw.cancelProposed());
+        assertEq(owner.balance, ownerEthBefore + 5 ether);
+        assertEq(token.balanceOf(owner), ownerTokenBefore + 1_000e18);
+        assertEq(address(sw).balance, 0);
+        assertEq(token.balanceOf(address(sw)), 0);
+
+        // Terminal: cannot ping, withdraw, or trigger
+        vm.prank(agent);
+        vm.expectRevert(DeadMansSwitch.AlreadyTriggered.selector);
+        sw.ping();
+
+        vm.prank(owner);
+        vm.expectRevert(DeadMansSwitch.AlreadyTriggered.selector);
+        sw.withdraw(address(0), 1 ether);
+
+        vm.prank(stranger);
+        vm.expectRevert(DeadMansSwitch.AlreadyTriggered.selector);
+        sw.trigger();
+    }
+
+    function test_mutualCancelValidation() public {
+        // Beneficiary cannot approve without proposal
+        vm.prank(beneficiary);
+        vm.expectRevert(DeadMansSwitch.CancelNotProposed.selector);
+        sw.approveCancel();
+
+        // Stranger cannot propose
+        vm.prank(stranger);
+        vm.expectRevert(DeadMansSwitch.NotOwner.selector);
+        sw.proposeCancel();
+
+        // Owner proposes
+        vm.prank(owner);
+        sw.proposeCancel();
+
+        // Stranger cannot approve
+        vm.prank(stranger);
+        vm.expectRevert(DeadMansSwitch.NotBeneficiary.selector);
+        sw.approveCancel();
+
+        // Owner revokes proposal
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, false, address(sw));
+        emit DeadMansSwitch.CancelProposalRevoked();
+        sw.revokeCancel();
+        assertFalse(sw.cancelProposed());
+
+        // Beneficiary cannot approve after revoke
+        vm.prank(beneficiary);
+        vm.expectRevert(DeadMansSwitch.CancelNotProposed.selector);
+        sw.approveCancel();
+    }
+
+    function test_mutualCancelBlockedAfterExpiry() public {
+        _expire();
+        vm.prank(owner);
+        vm.expectRevert(DeadMansSwitch.Expired.selector);
+        sw.proposeCancel();
+    }
+
     // ---- ping ---------------------------------------------------------------------------------
 
     function test_agentAndOwnerCanPing() public {
