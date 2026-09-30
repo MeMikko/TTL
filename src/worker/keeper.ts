@@ -1,9 +1,10 @@
-import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import {
   BaseError,
   ContractFunctionRevertedError,
   createPublicClient,
   createWalletClient,
+  erc20Abi,
   formatEther,
   formatGwei,
   getAddress,
@@ -26,6 +27,7 @@ export const factoryAbi = parseAbi([
 ]);
 export const switchAbi = parseAbi([
   'function status() view returns (bool triggered, bool expired, uint64 deadline, uint64 lastPing, uint64 ttl)',
+  'function tokens() view returns (address[])',
   'function trigger()',
   'error NotExpired()',
   'error AlreadyTriggered()',
@@ -40,6 +42,8 @@ const CHAINS = { 84532: baseSepolia, 8453: base, 31337: foundry } as const;
  */
 const REFRESH_MS = 30 * 60_000;
 const CHECK_BATCH = 200;
+/** Headroom on the node's gas estimate for the trigger() transaction. */
+const GAS_HEADROOM_PCT = 20n;
 const MAX_CHUNKS_PER_PASS = 50;
 const LOW_BALANCE_WARN_EVERY_MS = 60 * 60_000;
 
@@ -54,13 +58,19 @@ export interface KeeperOptions {
   logChunk: number;
   confirmations: number;
   maxFeeGwei: number;
+  /** Largest gas limit the keeper will pay for one trigger() (bounds the cost per switch). */
+  maxGas: number;
   minBalanceEth: number;
+  /** Switches read per pass (default 200). */
+  checkBatch?: number;
 }
 
 export interface KeeperPassResult {
   discovered: number;
   checked: number;
   triggered: number;
+  /** Expired switches deliberately left alone (empty, or too expensive to trigger). */
+  skipped: number;
   failed: number;
 }
 
@@ -81,6 +91,7 @@ export function createKeeper(opts: KeeperOptions) {
   const factory = getAddress(opts.factory);
   const factoryKey = factory.toLowerCase();
   const maxFee = parseGwei(String(opts.maxFeeGwei));
+  const maxGas = BigInt(opts.maxGas);
   const minBalance = parseEther(String(opts.minBalanceEth));
   let chainVerified = false;
   let lastLowBalanceWarn = 0;
@@ -169,6 +180,44 @@ export function createKeeper(opts: KeeperOptions) {
       );
   }
 
+  /**
+   * Leaves an expired switch alone: it is not re-checked every pass (so a pile of them cannot
+   * crowd out real expiries) but only on the slow refresh, in case assets arrive later.
+   * Triggering stays permissionless, so the beneficiary can always do it themselves.
+   */
+  async function skip(address: string, reason: string) {
+    logger.info({ address, reason }, 'keeper skipped switch');
+    await db
+      .update(schema.keeperSwitches)
+      .set({ skippedAt: new Date(), lastError: `skipped: ${reason}` })
+      .where(
+        and(eq(schema.keeperSwitches.chainId, chainId), eq(schema.keeperSwitches.address, address)),
+      );
+  }
+
+  /**
+   * Whether trigger() would move anything: an ETH balance or a balance of a registered token.
+   * Empty switches cost gas to trigger for no one's benefit, and are free to mass-produce.
+   */
+  async function hasAssets(address: Address): Promise<boolean> {
+    if ((await client.getBalance({ address })) > 0n) return true;
+    const tokens = await client.readContract({ address, abi: switchAbi, functionName: 'tokens' });
+    const balances = await Promise.all(
+      tokens.map(
+        (token) =>
+          client
+            .readContract({
+              address: token,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [address],
+            })
+            .catch(() => 0n), // a broken token moves nothing (the contract skips it the same way)
+      ),
+    );
+    return balances.some((b) => b > 0n);
+  }
+
   async function recordError(address: string, message: string) {
     await db
       .update(schema.keeperSwitches)
@@ -178,43 +227,63 @@ export function createKeeper(opts: KeeperOptions) {
       );
   }
 
-  /** Sends trigger() after simulating it. Returns true when the switch is now triggered. */
-  async function trigger(address: string): Promise<boolean> {
+  /**
+   * Sends trigger() after simulating it, unless the switch is empty or the call would need more
+   * than KEEPER_MAX_GAS (e.g. a registered token whose transfer burns all the gas it is given).
+   * The gas limit is always set explicitly, so one trigger never costs more than
+   * KEEPER_MAX_GAS × KEEPER_MAX_FEE_GWEI.
+   */
+  async function trigger(address: string): Promise<'triggered' | 'skipped' | 'failed'> {
     const fees = await client.estimateFeesPerGas();
     if (fees.maxFeePerGas > maxFee) {
       const msg = `max fee ${formatGwei(fees.maxFeePerGas)} gwei above KEEPER_MAX_FEE_GWEI`;
       logger.warn({ address }, msg);
       await recordError(address, msg);
-      return false;
+      return 'failed';
     }
     try {
+      if (!(await hasAssets(address as Address))) {
+        await skip(address, 'nothing to transfer');
+        return 'skipped';
+      }
       const { request } = await client.simulateContract({
         account,
         address: address as Address,
         abi: switchAbi,
         functionName: 'trigger',
       });
-      const hash = await wallet.writeContract(request);
+      const estimate = await client.estimateContractGas(request);
+      if (estimate > maxGas) {
+        await skip(address, `needs ${estimate} gas, above KEEPER_MAX_GAS ${maxGas}`);
+        return 'skipped';
+      }
+      const withHeadroom = (estimate * (100n + GAS_HEADROOM_PCT)) / 100n;
+      const gas = withHeadroom < maxGas ? withHeadroom : maxGas;
+      const hash = await wallet.writeContract({ ...request, gas });
       const receipt = await client.waitForTransactionReceipt({ hash, timeout: 120_000 });
       if (receipt.status !== 'success') {
         await recordError(address, `trigger transaction reverted: ${hash}`);
-        return false;
+        return 'failed';
       }
       await markTriggered(address, hash);
-      logger.info({ address, tx: hash }, 'keeper triggered switch');
-      return true;
+      logger.info({ address, tx: hash, gasUsed: receipt.gasUsed }, 'keeper triggered switch');
+      return 'triggered';
     } catch (err) {
       if (revertName(err) === 'AlreadyTriggered') {
         await markTriggered(address, null); // someone else was first
-        return true;
+        return 'triggered';
       }
       logger.warn({ address, err: shortError(err) }, 'keeper trigger failed');
       await recordError(address, shortError(err));
-      return false;
+      return 'failed';
     }
   }
 
-  /** Reads due / stale switches and triggers the expired ones. */
+  /**
+   * Reads due / stale switches and triggers the expired ones. Fresh expiries come first, then
+   * expired switches whose last attempt failed (retried every pass), then everything else — so
+   * neither failing nor skipped switches nor the slow refresh can delay a real expiry.
+   */
   async function check(): Promise<Omit<KeeperPassResult, 'discovered'>> {
     const block = await client.getBlock();
     const chainNow = Number(block.timestamp);
@@ -228,14 +297,18 @@ export function createKeeper(opts: KeeperOptions) {
           isNull(t.triggeredAt),
           or(
             isNull(t.deadline),
-            lt(t.deadline, chainNow),
+            and(lt(t.deadline, chainNow), isNull(t.skippedAt)),
             isNull(t.checkedAt),
             lt(t.checkedAt, new Date(Date.now() - REFRESH_MS)),
           ),
         ),
       )
-      .orderBy(asc(t.deadline))
-      .limit(CHECK_BATCH);
+      .orderBy(
+        sql`case when ${t.deadline} < ${chainNow} and ${t.skippedAt} is null
+          then (case when ${t.lastError} is null then 0 else 1 end) else 2 end`,
+        sql`${t.deadline} asc nulls first`,
+      )
+      .limit(opts.checkBatch ?? CHECK_BATCH);
 
     const statuses = await Promise.all(
       rows.map(async ({ address }) => {
@@ -253,6 +326,7 @@ export function createKeeper(opts: KeeperOptions) {
     );
 
     let triggered = 0;
+    let skipped = 0;
     let failed = 0;
     for (const s of statuses) {
       if (!s.ok) {
@@ -270,11 +344,13 @@ export function createKeeper(opts: KeeperOptions) {
         .where(and(eq(t.chainId, chainId), eq(t.address, s.address)));
       // Sequential on purpose: one nonce stream from one hot wallet.
       if (s.expired && !s.triggered) {
-        if (await trigger(s.address)) triggered++;
+        const outcome = await trigger(s.address);
+        if (outcome === 'triggered') triggered++;
+        else if (outcome === 'skipped') skipped++;
         else failed++;
       }
     }
-    return { checked: rows.length, triggered, failed };
+    return { checked: rows.length, triggered, skipped, failed };
   }
 
   async function checkBalance() {

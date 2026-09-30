@@ -110,6 +110,7 @@ export function createWorker(deps: WorkerDeps): Worker {
           logChunk: config.KEEPER_LOG_CHUNK,
           confirmations: config.KEEPER_CONFIRMATIONS,
           maxFeeGwei: config.KEEPER_MAX_FEE_GWEI,
+          maxGas: config.KEEPER_MAX_GAS,
           minBalanceEth: config.KEEPER_MIN_BALANCE_ETH,
         })
       : undefined);
@@ -189,7 +190,7 @@ export function createWorker(deps: WorkerDeps): Worker {
         config.KEEPER_POLL_MS,
         async () => {
           const r = await keeper.pass();
-          if (r.discovered || r.triggered || r.failed) logger.info(r, 'keeper pass');
+          if (r.discovered || r.triggered || r.skipped || r.failed) logger.info(r, 'keeper pass');
         },
         logger,
       ),
