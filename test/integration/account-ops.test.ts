@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, testConfig, testDatabase } from '../helpers/app.js';
-import { bearer, json, resetDb, signIn } from '../helpers/auth.js';
+import { bearer, json, newWallet, requestChallenge, resetDb, signIn } from '../helpers/auth.js';
 
 const database = testDatabase();
 afterAll(() => database.close());
@@ -72,6 +72,77 @@ describe('emergency stop', () => {
     expect(await res.json()).toEqual({ revoked: 1 });
     // The key that made the call is now dead.
     expect((await get('/v1/account', me.apiKey.key)).status).toBe(401);
+  });
+});
+
+describe('operator wallet session', () => {
+  it('signs in with the wallet and authorizes the operator endpoints', async () => {
+    const app = buildApp(database, {
+      config: testConfig({ PUBLIC_BASE_URL: 'https://time2live.xyz' }),
+    });
+    const wallet = newWallet();
+    const { message } = await requestChallenge(app, wallet.address);
+    const signature = await wallet.signMessage({ message });
+    const res = await app.request('/v1/auth/session', json({ message, signature }));
+    expect(res.status).toBe(200);
+    const sess = (await res.json()) as { token: string; address: string; expiresAt: string };
+    expect(sess.token).toMatch(/^t2ls_/);
+
+    // The session token works on the operator endpoints, like an API key.
+    const h = { authorization: `Bearer ${sess.token}` };
+    const overview = await app.request('/v1/account/overview', { headers: h });
+    expect(overview.status).toBe(200);
+    const ov = (await overview.json()) as { account: { address: string } };
+    expect(ov.account.address.toLowerCase()).toBe(wallet.address.toLowerCase());
+    expect((await app.request('/v1/account/pause-all', json({}, h))).status).toBe(200);
+
+    // A used challenge cannot be replayed for a second session.
+    expect((await app.request('/v1/auth/session', json({ message, signature }))).status).toBe(401);
+    // A garbage session token is rejected.
+    expect(
+      (
+        await app.request('/v1/account/overview', {
+          headers: { authorization: 'Bearer t2ls_nope' },
+        })
+      ).status,
+    ).toBe(401);
+  });
+
+  it('survives revoke-all, so the human keeps access while agent keys die', async () => {
+    const app = buildApp(database, {
+      config: testConfig({ PUBLIC_BASE_URL: 'https://time2live.xyz' }),
+    });
+    const wallet = newWallet();
+    // Mint an API key (the "agent") and an operator session for the same wallet.
+    const signed = await signIn(app, wallet);
+    const { message } = await requestChallenge(app, wallet.address);
+    const sess = (await (
+      await app.request(
+        '/v1/auth/session',
+        json({ message, signature: await wallet.signMessage({ message }) }),
+      )
+    ).json()) as { token: string };
+
+    const sh = { authorization: `Bearer ${sess.token}` };
+    expect((await app.request('/v1/account/keys/revoke-all', json({}, sh))).status).toBe(200);
+    // Agent key is dead…
+    expect((await app.request('/v1/account', { headers: bearer(signed.apiKey.key) })).status).toBe(
+      401,
+    );
+    // …but the operator session still works.
+    expect((await app.request('/v1/account/overview', { headers: sh })).status).toBe(200);
+  });
+
+  it('serves the operator dashboard page', async () => {
+    const app = buildApp(database, {
+      config: testConfig({ PUBLIC_BASE_URL: 'https://time2live.xyz' }),
+    });
+    const res = await app.request('/dashboard');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    const html = await res.text();
+    expect(html).toContain('/v1/auth/session');
+    expect(html).toContain('Pause everything');
   });
 });
 

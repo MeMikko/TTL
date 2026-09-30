@@ -28,7 +28,8 @@ export interface AppEnv {
     requestId: string;
     /** Set by requireAuth. */
     account: Account;
-    apiKey: ApiKey;
+    /** The API key, when authenticated by one; absent for wallet operator sessions. */
+    apiKey?: ApiKey;
     /** Set by acceptPayment when this request carried a settled x402 payment. */
     payment?: { paymentId: string; product: Product; applied: boolean };
   };
