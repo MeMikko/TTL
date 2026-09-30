@@ -319,6 +319,117 @@ also pings (≥ now + 1 h), so the 30-minute refresh never misses an expiry.
 If the keeper is down, nothing is lost: `trigger()` is permissionless, and the next pass catches
 up.
 
+## 8d. Testnet dry-run (Base Sepolia)
+
+Prove the whole payment and contract flow on Base Sepolia before touching mainnet. The factory is
+deployed deterministically (CREATE2), so the mainnet address is identical regardless — a testnet
+run costs nothing and does not "use up" the address. Two independent tests; do either or both.
+
+### Prerequisites (once, on your own machine)
+
+- Foundry: `curl -L https://foundry.paradigm.xyz | bash && foundryup`.
+- Three test wallets: **deployer** (publishes the factory), **keeper** (hot wallet paying
+  `trigger()` gas), **beneficiary** (any address the switch sends to). `cast wallet new` makes one.
+- Fund deployer + keeper with a little Base Sepolia ETH (a Base Sepolia faucet). ~0.01 ETH each.
+
+### A. Publish the factory to Sepolia
+
+```sh
+cd contracts
+cast wallet import deployer --interactive          # paste the deployer private key, set a password
+forge script script/Deploy.s.sol --rpc-url base_sepolia --account deployer --broadcast
+```
+
+Record from the output: `DeadMansSwitchFactory 0xFAC…` and
+`current block (use as KEEPER_FROM_BLOCK) <N>`.
+
+### B. Enable the keeper (server)
+
+In `/opt/time2live/.env`:
+
+```sh
+KEEPER_ENABLED=true
+KEEPER_CHAIN_ID=84532
+KEEPER_RPC_URL=https://sepolia.base.org            # a provider URL is more reliable
+KEEPER_FACTORY_ADDRESS=0xFAC…
+KEEPER_FROM_BLOCK=<N>
+KEEPER_PRIVATE_KEY=0x…                             # the keeper hot wallet
+```
+
+`docker compose up -d --force-recreate worker`, then confirm `keeper started` in
+`docker compose logs worker`.
+
+### C. Exercise the on-chain switch
+
+Create a switch (agent = deployer, ttl = 1 h minimum, 0.001 ETH deposited), then find its address:
+
+```sh
+cast send 0xFAC… "createSwitch(address,address,uint64,address[],bytes32)" \
+  <DEPLOYER_ADDR> <BENEFICIARY_ADDR> 3600 "[]" \
+  0x0000000000000000000000000000000000000000000000000000000000000001 \
+  --value 0.001ether --rpc-url base_sepolia --account deployer
+cast call 0xFAC… "getSwitchesByOwner(address)(address[])" <DEPLOYER_ADDR> --rpc-url base_sepolia
+```
+
+Within ~60 s the keeper should record it:
+
+```sh
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "select address, deadline, triggered_at, trigger_tx from keeper_switches;"
+```
+
+`ping()` resets the deadline (`cast send 0xSWITCH… "ping()" …`). The TTL minimum is 1 h and chain
+time cannot be fast-forwarded on a live chain, so the expiry test takes ~1 h of wall-clock; the
+keeper then triggers on its next 60 s poll. Verify:
+
+```sh
+cast call 0xSWITCH… "status()(bool,bool,uint64,uint64,uint64)" --rpc-url base_sepolia  # triggered=true
+cast balance <BENEFICIARY_ADDR> --rpc-url base_sepolia                                  # received 0.001 ETH
+docker compose logs --tail 30 worker | grep -i "keeper triggered"
+```
+
+The trigger, sweep and fund-safety logic is exhaustively covered by the Foundry unit, fuzz and
+invariant tests; this live run only confirms the keeper, RPC and gas against a real chain.
+
+### D. Exercise x402 payments
+
+x402 must be enabled (§8b). Get a little Base Sepolia USDC into a test wallet from the Circle
+faucet (Base Sepolia USDC is `0x036CbD53842c5426634e7929541eC2318f3dCF7e`). Then, from the repo
+root (its `@x402` dependencies are used), register an account, let the first monitor use the free
+tier, and pay the `$0.10` activation to create a second one — retried in a single call by an x402
+client:
+
+```sh
+PK=0xAGENT_KEY node --input-type=module <<'EOF'
+import { privateKeyToAccount } from 'viem/accounts';
+import { x402Client } from '@x402/core/client';
+import { ExactEvmScheme } from '@x402/evm/exact/client';
+import { wrapFetchWithPayment } from '@x402/fetch';
+const BASE = 'https://time2live.xyz';
+const wallet = privateKeyToAccount(process.env.PK);
+const post = (p, b, h = {}) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: JSON.stringify(b) });
+const { message } = await (await post('/v1/auth/challenge', { address: wallet.address, chainId: 8453 })).json();
+const { apiKey } = await (await post('/v1/auth/verify', { message, signature: await wallet.signMessage({ message }) })).json();
+const auth = { authorization: `Bearer ${apiKey.key}` };
+await post('/v1/monitors', { name: 'a', ttlSeconds: 300 }, auth);
+const pay = wrapFetchWithPayment(fetch, new x402Client().register('eip155:84532', new ExactEvmScheme(wallet)));
+const res = await pay(BASE + '/v1/monitors', { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ name: 'b', ttlSeconds: 300 }) });
+console.log('paid create', res.status, res.headers.get('payment-response') ? '(receipt present)' : '');
+console.log('billing', await (await fetch(BASE + '/v1/billing', { headers: auth })).json());
+EOF
+```
+
+Expected: `paid create 201 (receipt present)` and `/v1/billing` shows `activated: true`; on-chain
+a USDC transfer to `X402_PAY_TO` appears.
+
+### Promote to mainnet
+
+Once both pass and you trust them: rerun **A** with `--rpc-url base` (same factory address), set
+`KEEPER_CHAIN_ID=8453` with a mainnet RPC, and for x402 switch `X402_NETWORK=eip155:8453` with a
+mainnet facilitator (the public `x402.org` one is testnet-only; e.g. Coinbase CDP, plus its
+`X402_FACILITATOR_AUTHORIZATION`). Consider a light audit before holding significant funds in the
+contract.
+
 ## 9. Security checklist
 
 - Only Caddy publishes ports; Postgres has no `ports:` (Docker-published ports would bypass ufw).
