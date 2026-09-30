@@ -10,6 +10,7 @@ import { claimAlerts, processAlert, type AlertDeps } from './alerts.js';
 import { cleanupExpired } from './cleanup.js';
 import { claimRuns, processRun, type DeliveryDeps } from './delivery.js';
 import { createHttpClient, type HttpClient } from './http-client.js';
+import { createKeeper, type Keeper } from './keeper.js';
 import { scheduleDueJobs } from './scheduler.js';
 import { recordTick } from './ticker.js';
 
@@ -23,6 +24,8 @@ export interface WorkerDeps {
   /** Override the outbound client (tests). */
   httpClient?: HttpClient;
   telegram?: TelegramClient;
+  /** Keeper override (tests); otherwise built from config when KEEPER_ENABLED. */
+  keeper?: Keeper;
 }
 
 export interface Worker {
@@ -82,6 +85,23 @@ export function createWorker(deps: WorkerDeps): Worker {
         })
       : undefined);
   const alertDeps: AlertDeps = { ...deliveryDeps, telegram };
+  const keeper =
+    deps.keeper ??
+    (config.KEEPER_ENABLED
+      ? createKeeper({
+          db,
+          logger,
+          rpcUrl: config.KEEPER_RPC_URL!,
+          chainId: config.KEEPER_CHAIN_ID,
+          factory: config.KEEPER_FACTORY_ADDRESS!,
+          privateKey: config.KEEPER_PRIVATE_KEY! as `0x${string}`,
+          fromBlock: config.KEEPER_FROM_BLOCK,
+          logChunk: config.KEEPER_LOG_CHUNK,
+          confirmations: config.KEEPER_CONFIRMATIONS,
+          maxFeeGwei: config.KEEPER_MAX_FEE_GWEI,
+          minBalanceEth: config.KEEPER_MIN_BALANCE_ETH,
+        })
+      : undefined);
   const inFlight = new Set<Promise<unknown>>();
   let lastCleanup = 0;
 
@@ -151,6 +171,19 @@ export function createWorker(deps: WorkerDeps): Worker {
     loop('monitors', config.SCHEDULER_POLL_MS, monitorPass, logger),
     loop('delivery', config.SCHEDULER_POLL_MS, deliveryPass, logger),
   ];
+  if (keeper) {
+    loops.push(
+      loop(
+        'keeper',
+        config.KEEPER_POLL_MS,
+        async () => {
+          const r = await keeper.pass();
+          if (r.discovered || r.triggered || r.failed) logger.info(r, 'keeper pass');
+        },
+        logger,
+      ),
+    );
+  }
 
   return {
     tick,

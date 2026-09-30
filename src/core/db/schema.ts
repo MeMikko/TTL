@@ -392,6 +392,42 @@ export const payments = pgTable(
   ],
 );
 
+/** Keeper: how far the factory's SwitchCreated logs have been scanned, per chain + factory. */
+export const keeperCursors = pgTable(
+  'keeper_cursors',
+  {
+    chainId: integer('chain_id').notNull(),
+    factory: text('factory').notNull(),
+    nextBlock: bigint('next_block', { mode: 'number' }).notNull(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.chainId, t.factory] })],
+);
+
+/** Keeper: on-chain DeadMansSwitch clones discovered from the factory. */
+export const keeperSwitches = pgTable(
+  'keeper_switches',
+  {
+    chainId: integer('chain_id').notNull(),
+    /** Lower-case address. */
+    address: text('address').notNull(),
+    owner: text('owner').notNull(),
+    createdBlock: bigint('created_block', { mode: 'number' }).notNull(),
+    /** Last known on-chain deadline (unix seconds); null until first read. */
+    deadline: bigint('deadline', { mode: 'number' }),
+    checkedAt: ts('checked_at'),
+    triggeredAt: ts('triggered_at'),
+    /** Our trigger() transaction, when we were the ones who triggered it. */
+    triggerTx: text('trigger_tx'),
+    lastError: text('last_error'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.chainId, t.address] }),
+    index('keeper_switches_due_idx').on(t.chainId, t.deadline),
+  ],
+);
+
 export type Account = typeof accounts.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type Monitor = typeof monitors.$inferSelect;
@@ -401,3 +437,4 @@ export type Job = typeof jobs.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type JobAttempt = typeof jobAttempts.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
+export type KeeperSwitch = typeof keeperSwitches.$inferSelect;

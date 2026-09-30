@@ -100,6 +100,38 @@ const envSchema = z
     /** Optional "Authorization" header value for facilitators that require one. */
     X402_FACILITATOR_AUTHORIZATION: z.string().min(1).optional(),
 
+    /**
+     * Keeper for the on-chain DeadMansSwitch: the worker discovers switches from the factory's
+     * SwitchCreated events and calls trigger() on expired ones from a low-balance hot wallet.
+     */
+    KEEPER_ENABLED: z.stringbool().default(false),
+    KEEPER_RPC_URL: z.url().optional(),
+    KEEPER_CHAIN_ID: z.coerce
+      .number()
+      .int()
+      .pipe(z.union([z.literal(84532), z.literal(8453), z.literal(31337)]))
+      .default(84532),
+    KEEPER_FACTORY_ADDRESS: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 0x-prefixed EVM address')
+      .optional(),
+    /** First block to scan for SwitchCreated (the factory's deployment block). */
+    KEEPER_FROM_BLOCK: z.coerce.number().int().min(0).default(0),
+    /** Hot wallet paying for trigger() gas. Keep only a few dollars of ETH on it. */
+    KEEPER_PRIVATE_KEY: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a 0x-prefixed 32-byte hex key')
+      .optional(),
+    KEEPER_POLL_MS: z.coerce.number().int().min(1000).default(60_000),
+    /** Blocks per eth_getLogs request (public RPCs cap the range). */
+    KEEPER_LOG_CHUNK: z.coerce.number().int().min(1).max(100_000).default(2_000),
+    /** Blocks to wait before trusting SwitchCreated logs (reorg safety). */
+    KEEPER_CONFIRMATIONS: z.coerce.number().int().min(0).max(1_000).default(5),
+    /** Refuse to send when the network's max fee is above this (protects the hot wallet). */
+    KEEPER_MAX_FEE_GWEI: z.coerce.number().positive().default(1),
+    /** Warn in the logs below this keeper balance (ETH). */
+    KEEPER_MIN_BALANCE_ETH: z.coerce.number().nonnegative().default(0.002),
+
     /** Dogfooding: the worker pings this heartbeat URL on every tick (see docs/OPERATIONS.md). */
     SELF_HEARTBEAT_URL: z.url().optional(),
   })
@@ -110,6 +142,17 @@ const envSchema = z
         path: ['X402_PAY_TO'],
         message: 'required when X402_ENABLED',
       });
+    }
+    if (cfg.KEEPER_ENABLED) {
+      for (const key of [
+        'KEEPER_RPC_URL',
+        'KEEPER_FACTORY_ADDRESS',
+        'KEEPER_PRIVATE_KEY',
+      ] as const) {
+        if (!cfg[key]) {
+          ctx.addIssue({ code: 'custom', path: [key], message: 'required when KEEPER_ENABLED' });
+        }
+      }
     }
     if (cfg.TELEGRAM_BOT_TOKEN && (!cfg.TELEGRAM_BOT_USERNAME || !cfg.TELEGRAM_WEBHOOK_SECRET)) {
       ctx.addIssue({

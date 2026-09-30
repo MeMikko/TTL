@@ -24,16 +24,45 @@ jobs:
       TEST_DATABASE_URL: postgres://t2l:t2l@localhost:5432/time2live_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      # anvil + forge for the keeper tests (they deploy the real contracts to a local chain)
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      FOUNDRY_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+      - run: forge fmt --check
+      - run: forge build --sizes
+      - run: forge test -vvv
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Runs against the Foundry build; exclusions and fail level in contracts/slither.config.json.
+      - run: pip install slither-analyzer==0.11.6 && slither .
 
   docker:
     runs-on: ubuntu-latest

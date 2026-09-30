@@ -21,6 +21,14 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   const x402 = deps.config.X402_ENABLED
     ? { enabled: true, network: deps.config.X402_NETWORK, asset: 'USDC' }
     : { enabled: false };
+  // The on-chain switch is advertised once the factory is deployed and configured.
+  const onChain = deps.config.KEEPER_FACTORY_ADDRESS
+    ? {
+        chainId: deps.config.KEEPER_CHAIN_ID,
+        factory: deps.config.KEEPER_FACTORY_ADDRESS,
+        keeper: deps.config.KEEPER_ENABLED,
+      }
+    : null;
   const app = new Hono<AppEnv>();
   const cache = 'public, max-age=300';
 
@@ -40,13 +48,16 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
         health: `${base}/healthz`,
       },
       x402,
+      deadMansSwitchContract: onChain,
     });
   });
 
   app.get('/llms.txt', (c) => {
     c.header('cache-control', cache);
     c.header('content-type', 'text/markdown; charset=utf-8');
-    return c.body(llmsTxt(base, deps.config.X402_ENABLED ? deps.config.X402_NETWORK : null));
+    return c.body(
+      llmsTxt(base, deps.config.X402_ENABLED ? deps.config.X402_NETWORK : null, onChain),
+    );
   });
 
   let tools: Promise<ToolList> | undefined;
@@ -100,7 +111,18 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   return app;
 }
 
-function llmsTxt(base: string, network: string | null): string {
+function llmsTxt(
+  base: string,
+  network: string | null,
+  onChain: { chainId: number; factory: string; keeper: boolean } | null,
+): string {
+  const contract = onChain
+    ? `
+## On-chain dead man's switch (Base, chain ${onChain.chainId})
+
+For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`. \`createSwitch(agent, beneficiary, ttl, tokens[], salt)\` (payable) deploys your own switch holding ETH and up to 20 ERC-20s. The agent or owner calls \`ping()\` at least every \`ttl\` seconds (1 h – 365 d); after the deadline anyone can call \`trigger()\` and everything goes to the beneficiary.${onChain.keeper ? ' Our keeper calls `trigger()` automatically.' : ''} Before the deadline only the owner can withdraw; after it, nobody can stop the transfer.
+`
+    : '';
   const free = TIERS.free;
   const unactivated = TIERS.unactivated;
   return `# time2live
@@ -129,6 +151,7 @@ Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`.
 - Beyond that, from prepaid credits: ${usd(PRICES.runMicro)} per run, ${usd(PRICES.monitorMonthMicro)} per extra monitor per 30 days. Packs: ${PRICES.packs.map((p) => `$${p}`).join(', ')}.
 - A call that needs payment returns \`402\` with a \`PAYMENT-REQUIRED\` header (x402 v2). Pay with an x402 client and retry the same request with \`PAYMENT-SIGNATURE\`; the receipt is in \`PAYMENT-RESPONSE\`. Over MCP the tool result carries PaymentRequired and the client retries with \`_meta["x402/payment"]\`.
 
+${contract}
 ## API reference
 
 - [OpenAPI 3.1](${base}/openapi.json): every endpoint, schema and error.
