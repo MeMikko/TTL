@@ -30,7 +30,7 @@ contract DeadMansSwitchFactory {
         payable
         returns (address payable switchAddress)
     {
-        return createSwitch(agent, beneficiary, ttl, tokens, salt, "");
+        return createSwitch(agent, beneficiary, ttl, tokens, salt, "", 0);
     }
 
     /// @notice Creates and initializes a switch with an optional reason/label.
@@ -41,12 +41,26 @@ contract DeadMansSwitchFactory {
         address[] calldata tokens,
         bytes32 salt,
         string memory reason
+    ) external payable returns (address payable switchAddress) {
+        return createSwitch(agent, beneficiary, ttl, tokens, salt, reason, 0);
+    }
+
+    /// @notice Creates and initializes a switch with an optional reason and a trigger reward
+    /// (basis points of the ETH balance paid to whoever calls `trigger()`; see `DeadMansSwitch`).
+    function createSwitch(
+        address agent,
+        address beneficiary,
+        uint64 ttl,
+        address[] calldata tokens,
+        bytes32 salt,
+        string memory reason,
+        uint16 triggerRewardBps
     ) public payable returns (address payable switchAddress) {
         switchAddress = payable(Clones.cloneDeterministic(implementation, _salt(msg.sender, salt)));
         _ownerSwitches[msg.sender].push(switchAddress);
         _allSwitches.push(switchAddress);
         emit SwitchCreated(switchAddress, msg.sender, agent, beneficiary, ttl);
-        DeadMansSwitch(switchAddress).initialize(msg.sender, agent, beneficiary, ttl, tokens, reason);
+        DeadMansSwitch(switchAddress).initialize(msg.sender, agent, beneficiary, ttl, tokens, reason, triggerRewardBps);
         if (msg.value > 0) {
             (bool ok,) = switchAddress.call{value: msg.value}("");
             if (!ok) revert DepositFailed();

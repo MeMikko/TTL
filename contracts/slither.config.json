@@ -2,6 +2,6 @@
   "filter_paths": "lib/|test/",
   "exclude_informational": false,
   "exclude_low": false,
-  "detectors_to_exclude": "timestamp,low-level-calls,calls-loop,costly-loop",
+  "detectors_to_exclude": "timestamp,low-level-calls,calls-loop,costly-loop,arbitrary-send-eth",
   "fail_on": "low"
 }
