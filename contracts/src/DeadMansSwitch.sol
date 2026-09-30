@@ -37,6 +37,8 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     uint64 public constant MAX_TTL = 365 days;
     /// @notice Registered token cap; keeps the loop in `trigger()` bounded.
     uint256 public constant MAX_TOKENS = 20;
+    /// @notice Upper bound for the trigger reward (5%).
+    uint16 public constant MAX_TRIGGER_REWARD_BPS = 500;
 
     address public owner;
     address public agent;
@@ -46,6 +48,8 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     bool public triggered;
     bool public cancelProposed;
     bool private _initialized;
+    /// @notice Optional cut of the ETH balance paid to whoever calls `trigger()` (basis points).
+    uint16 public triggerRewardBps;
 
     string public reason;
 
@@ -65,6 +69,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     event CancelProposalRevoked();
     event Cancelled(address indexed by);
     event Triggered(address indexed by, address indexed beneficiary);
+    event TriggerRewardPaid(address indexed to, uint256 amount);
     event Transferred(address indexed token, address indexed to, uint256 amount);
     event TransferFailed(address indexed token, uint256 amount);
     event Swept(address indexed token, uint256 amount);
@@ -84,6 +89,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     error TokenAlreadyAdded();
     error TokenNotRegistered();
     error EthTransferFailed();
+    error InvalidRewardBps();
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -101,14 +107,14 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         _initialized = true;
     }
 
-    /// @notice Backwards-compatible one-time setup without reason string.
+    /// @notice Backwards-compatible one-time setup without reason string or trigger reward.
     function initialize(address owner_, address agent_, address beneficiary_, uint64 ttl_, address[] calldata tokens_)
         external
     {
-        initialize(owner_, agent_, beneficiary_, ttl_, tokens_, "");
+        initialize(owner_, agent_, beneficiary_, ttl_, tokens_, "", 0);
     }
 
-    /// @notice One-time setup, called by the factory in the clone's creation transaction.
+    /// @notice Backwards-compatible one-time setup without a trigger reward.
     function initialize(
         address owner_,
         address agent_,
@@ -116,17 +122,35 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         uint64 ttl_,
         address[] calldata tokens_,
         string memory reason_
+    ) external {
+        initialize(owner_, agent_, beneficiary_, ttl_, tokens_, reason_, 0);
+    }
+
+    /// @notice One-time setup, called by the factory in the clone's creation transaction.
+    /// @param triggerRewardBps_ optional cut (basis points, ≤ 5%) of the ETH balance paid to
+    /// whoever calls `trigger()` — lets a funded switch attract third-party triggers so its
+    /// liveness does not depend on any single keeper.
+    function initialize(
+        address owner_,
+        address agent_,
+        address beneficiary_,
+        uint64 ttl_,
+        address[] calldata tokens_,
+        string memory reason_,
+        uint16 triggerRewardBps_
     ) public {
         if (_initialized) revert AlreadyInitialized();
         _initialized = true;
         if (owner_ == address(0) || agent_ == address(0) || beneficiary_ == address(0)) revert ZeroAddress();
         _checkTtl(ttl_);
+        if (triggerRewardBps_ > MAX_TRIGGER_REWARD_BPS) revert InvalidRewardBps();
         owner = owner_;
         agent = agent_;
         beneficiary = beneficiary_;
         ttl = ttl_;
         lastPing = uint64(block.timestamp);
         reason = reason_;
+        triggerRewardBps = triggerRewardBps_;
         emit Initialized(owner_, agent_, beneficiary_, ttl_);
         for (uint256 i; i < tokens_.length; ++i) {
             _addToken(tokens_[i]);
@@ -285,9 +309,11 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     // ---- dead man's switch --------------------------------------------------------------------
 
     /// @notice Anyone may call this once the deadline has passed. Sends every registered token's
-    /// full balance and all ETH to the beneficiary. Terminal.
+    /// full balance and all ETH to the beneficiary (minus the optional trigger reward to the
+    /// caller). Terminal.
     /// @dev A token or recipient that reverts cannot block the switch: the failure is logged
-    /// (`TransferFailed`) and that asset stays here for `sweep()`.
+    /// (`TransferFailed`) and that asset stays here for `sweep()`. The reward is best-effort — if
+    /// the caller rejects ETH it simply flows to the beneficiary instead.
     function trigger() external nonReentrant {
         if (triggered) revert AlreadyTriggered();
         if (block.timestamp <= deadline()) revert NotExpired();
@@ -302,6 +328,13 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
             if (bal == 0) continue;
             if (t.trySafeTransfer(to, bal)) emit Transferred(address(t), to, bal);
             else emit TransferFailed(address(t), bal);
+        }
+
+        // Best-effort reward to the caller, so anyone (not just our keeper) is paid to trigger.
+        uint256 reward = triggerRewardBps == 0 ? 0 : (address(this).balance * triggerRewardBps) / 10_000;
+        if (reward > 0) {
+            (bool paid,) = msg.sender.call{value: reward}("");
+            if (paid) emit TriggerRewardPaid(msg.sender, reward);
         }
         uint256 eth = address(this).balance;
         if (eth > 0) {

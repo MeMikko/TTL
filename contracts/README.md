@@ -63,6 +63,15 @@ time2live's worker runs a **keeper** that discovers switches from `SwitchCreated
 `trigger()` on expired ones. It is only a convenience: triggering is permissionless, so the
 beneficiary or anyone else can always trigger themselves.
 
+### Trigger reward (optional, decentralises liveness)
+
+`createSwitch(..., triggerRewardBps)` (0 by default, max 5%) pays whoever calls `trigger()` that
+share of the switch's ETH balance; the rest goes to the beneficiary. A funded switch can therefore
+attract third-party triggers (anyone, an MEV bot), so its liveness does not depend on time2live's
+keeper being up. The reward is **best-effort**: if the caller rejects the ETH it simply flows to the
+beneficiary, and it never blocks the trigger. ETH-only, computed as
+`ethBalance * bps / 10000` — it does not touch ERC-20 transfers.
+
 ## Development
 
 ```sh
@@ -84,13 +93,15 @@ agent, a stranger and the beneficiary):
    after expiry.
 4. TTL bounds, `lastPing <= now` and the token cap always hold.
 
-Slither excludes four detectors that are inherent to the design and reviewed:
+Slither excludes five detectors that are inherent to the design and reviewed:
 
 - `timestamp`: a TTL contract has to compare against time, and ≥ 1 h TTLs make validator drift
   irrelevant.
 - `low-level-calls`: ETH sends and the guarded `balanceOf`.
 - `calls-loop`: the loop is bounded and failure-tolerant.
 - `costly-loop`: a false positive; `pop()` runs once, then the loop breaks.
+- `arbitrary-send-eth`: every ETH send goes to an intended party — the owner (`withdraw`), the
+  beneficiary (`trigger`/`sweep`) or the trigger caller (the opt-in, bounded, best-effort reward).
 
 ## Deploy
 

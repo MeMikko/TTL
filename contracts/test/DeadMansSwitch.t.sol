@@ -268,6 +268,56 @@ contract DeadMansSwitchTest is Test {
         assertEq(address(sw).balance, 0);
     }
 
+    function test_triggerRewardPaysCallerAndRestToBeneficiary() public {
+        address[] memory none = new address[](0);
+        vm.prank(owner);
+        DeadMansSwitch s = DeadMansSwitch(
+            factory.createSwitch(agent, beneficiary, TTL, none, bytes32("rew"), "", 250) // 2.5%
+        );
+        vm.deal(address(s), 10 ether);
+        assertEq(s.triggerRewardBps(), 250);
+        vm.warp(s.deadline() + 1);
+
+        vm.expectEmit(true, false, false, true, address(s));
+        emit DeadMansSwitch.TriggerRewardPaid(stranger, 0.25 ether);
+        vm.prank(stranger);
+        s.trigger();
+        assertEq(stranger.balance, 0.25 ether); // 2.5% of 10
+        assertEq(beneficiary.balance, 9.75 ether);
+        assertEq(address(s).balance, 0);
+    }
+
+    function test_triggerRewardDefaultsToZero() public {
+        _expire();
+        vm.prank(stranger);
+        sw.trigger();
+        assertEq(stranger.balance, 0);
+        assertEq(beneficiary.balance, 5 ether);
+    }
+
+    function test_triggerRewardCapEnforced() public {
+        address[] memory none = new address[](0);
+        vm.prank(owner);
+        vm.expectRevert(DeadMansSwitch.InvalidRewardBps.selector);
+        factory.createSwitch(agent, beneficiary, TTL, none, bytes32("bad"), "", 501); // > 5%
+    }
+
+    function test_triggerRewardBestEffortWhenCallerRejectsEth() public {
+        // A contract caller that rejects ETH still triggers; the reward simply goes to the beneficiary.
+        EthRejecter caller = new EthRejecter();
+        address[] memory none = new address[](0);
+        vm.prank(owner);
+        DeadMansSwitch s = DeadMansSwitch(factory.createSwitch(agent, beneficiary, TTL, none, bytes32("rej2"), "", 500));
+        vm.deal(address(s), 4 ether);
+        vm.warp(s.deadline() + 1);
+        vm.prank(address(caller));
+        s.trigger();
+        assertTrue(s.triggered());
+        assertEq(address(caller).balance, 0); // reward bounced
+        assertEq(beneficiary.balance, 4 ether); // everything reached the beneficiary
+        assertEq(address(s).balance, 0);
+    }
+
     function test_triggerIsTerminal() public {
         _expire();
         sw.trigger();
