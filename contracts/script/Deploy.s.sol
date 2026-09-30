@@ -24,7 +24,7 @@ contract Deploy is Script {
         factory = new DeadMansSwitchFactory{salt: SALT}();
         vm.stopBroadcast();
 
-        console.log("implementation", DeadMansSwitchFactory(predicted).implementation());
+        console.log("implementation", factory.implementation());
         console.log("KEEPER_FACTORY_ADDRESS", predicted);
         console.log("KEEPER_FROM_BLOCK", block.number);
     }
