@@ -297,7 +297,11 @@ second monitor on a fresh account must return 402 and succeed after paying $0.10
 
 **Mainnet:** the public `https://x402.org/facilitator` supports testnets only. Use a mainnet
 facilitator (e.g. Coinbase CDP) and set `X402_NETWORK=eip155:8453`, `X402_FACILITATOR_URL` and,
-if it needs one, `X402_FACILITATOR_AUTHORIZATION` (sent as the `Authorization` header).
+if it needs one, `X402_FACILITATOR_AUTHORIZATION` (sent as the `Authorization` header). The
+deployment's network mode (live / testnet / disabled) is derived from this and shown on `/`,
+`/llms.txt`, the landing page, the dashboard and the OpenAPI description, so it must reflect
+reality. If the keeper is also enabled it must be on the same network — a mixed testnet/mainnet
+deploy is rejected at startup.
 Payments are recorded in `payments`, balance movements in `credits_ledger`
 (`npm run admin -- show` shows the balance).
 

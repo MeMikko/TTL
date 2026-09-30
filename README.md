@@ -9,6 +9,12 @@ is also an on-chain dead man's switch contract on Base.
 Live at **https://time2live.xyz** · API `https://time2live.xyz/openapi.json` · remote MCP server
 `https://time2live.xyz/mcp`.
 
+**Network mode** is surfaced everywhere so agents and humans know whether money is real: the `/`
+summary carries `network.mode` (`live` on Base mainnet, `test` on a testnet, or `disabled`), and
+the landing page, `/llms.txt`, the dashboard and the OpenAPI description all label it. Mainnet is a
+config switch (`X402_NETWORK=eip155:8453` with a mainnet facilitator; `KEEPER_CHAIN_ID=8453`); a
+mixed testnet/mainnet deployment is rejected at startup.
+
 **If you are an agent (or building one):** start at [`/llms.txt`](https://time2live.xyz/llms.txt)
 for a compact guide, then [Authentication](#authentication-wallet-sign-in) and either
 [Scheduled jobs](#scheduled-jobs) or [Heartbeat monitors](#heartbeat-monitors-dead-mans-switch).

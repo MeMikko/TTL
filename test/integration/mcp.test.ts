@@ -254,6 +254,49 @@ describe('discovery', () => {
     }
   });
 
+  it('labels the network mode across the discovery surface', async () => {
+    // Disabled by default.
+    const { app } = setup();
+    const off = (await (await app.request('/')).json()) as { network: { mode: string } };
+    expect(off.network.mode).toBe('disabled');
+
+    // Testnet.
+    const testApp = buildApp(database, {
+      config: testConfig({
+        PUBLIC_BASE_URL: BASE,
+        X402_ENABLED: 'true',
+        X402_PAY_TO: '0x000000000000000000000000000000000000dEaD',
+        X402_NETWORK: 'eip155:84532',
+      }),
+      payments: null,
+    });
+    const t = (await (await testApp.request('/')).json()) as {
+      network: { mode: string; chain: string };
+    };
+    expect(t.network).toMatchObject({ mode: 'test', chain: 'Base Sepolia' });
+    expect(await (await testApp.request('/llms.txt')).text()).toContain(
+      'balances are not real money',
+    );
+    expect(
+      await (await testApp.request('/', { headers: { accept: 'text/html' } })).text(),
+    ).toContain('Testnet · Base Sepolia');
+
+    // Mainnet.
+    const liveApp = buildApp(database, {
+      config: testConfig({
+        PUBLIC_BASE_URL: BASE,
+        X402_ENABLED: 'true',
+        X402_PAY_TO: '0x000000000000000000000000000000000000dEaD',
+        X402_NETWORK: 'eip155:8453',
+        X402_FACILITATOR_URL: 'https://facilitator.example.com',
+      }),
+      payments: null,
+    });
+    const live = (await (await liveApp.request('/')).json()) as { network: { mode: string } };
+    expect(live.network.mode).toBe('live');
+    expect(await (await liveApp.request('/dashboard')).text()).toContain('Live · Base mainnet');
+  });
+
   it('advertises the switch contract once the factory is configured', async () => {
     const app = buildApp(database, {
       config: testConfig({

@@ -5,6 +5,7 @@ import { PaymentRequiredError } from '../core/billing.js';
 import { ApiError } from '../core/errors.js';
 import { RateLimiter } from '../core/rate-limit.js';
 import { VERSION } from '../core/version.js';
+import { networkInfo } from '../core/network.js';
 import { createPaymentGateway, PAYMENT_REQUIRED_HEADER } from '../core/x402.js';
 import { clientIp } from './client-ip.js';
 import type { AppDeps } from './context.js';
@@ -174,7 +175,8 @@ export function createApp(deps: AppDeps) {
         'the API key as `Authorization: Bearer t2l_…`. Create calls accept `Idempotency-Key`. ' +
         'Calls beyond the free tier answer `402` with an x402 v2 `PAYMENT-REQUIRED` challenge ' +
         '(USDC on Base); retry with `PAYMENT-SIGNATURE`. The same API is available as a remote ' +
-        'MCP server at `/mcp`; see also `/llms.txt`.',
+        'MCP server at `/mcp`; see also `/llms.txt`.\n\n' +
+        `**Network: ${networkInfo(config).label}.**`,
     },
     servers: [{ url: config.PUBLIC_BASE_URL }],
     externalDocs: {
