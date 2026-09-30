@@ -252,5 +252,18 @@ A frozen account gets `403 account_frozen` on every API call and cannot obtain n
 jobs stop producing runs and pending deliveries are cancelled. Its pings are still accepted,
 but no alerts are sent.
 
+## Operator controls (emergency stop & overview)
+
+Agents operate; the human owner supervises. These are API-key authed, so the owner (or a browser
+holding a key) can use them:
+
+- `POST /v1/account/pause-all` — kill switch: pauses every active job (cancelling pending runs)
+  and every monitor (no more alerts). Nothing is deleted; resume individually when ready.
+- `POST /v1/account/keys/revoke-all` — revokes every API key, including the caller's, locking the
+  agent out at once. Sign in again with the wallet to mint a new key.
+- `GET /v1/account/overview` — one read-only call returning account, tier, usage, credit balance,
+  job/monitor status counts, and the most recent monitors, jobs and payments — enough to render a
+  supervisory view without a dashboard.
+
 `GET /healthz` checks the process only; `GET /healthz?deep=1` also checks Postgres and that a
 worker ticked within `HEALTH_MAX_TICK_AGE_MS` (503 otherwise) — point external uptime checks there.

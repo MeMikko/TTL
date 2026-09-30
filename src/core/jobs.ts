@@ -216,6 +216,29 @@ export async function pauseJob(db: Db, accountId: string, jobId: string, now: Da
   });
 }
 
+/**
+ * Emergency stop: pauses every active job for the account and cancels its pending runs, in one
+ * transaction. Completed jobs are left as-is. Returns how many were paused.
+ */
+export async function pauseAllJobs(
+  db: Db,
+  accountId: string,
+  now: Date,
+): Promise<{ paused: number }> {
+  return db.transaction(async (tx) => {
+    await tx
+      .update(schema.jobRuns)
+      .set({ status: 'cancelled', finishedAt: now, lastError: 'account paused' })
+      .where(and(eq(schema.jobRuns.accountId, accountId), eq(schema.jobRuns.status, 'pending')));
+    const paused = await tx
+      .update(schema.jobs)
+      .set({ status: 'paused', nextRunAt: null, updatedAt: now })
+      .where(and(eq(schema.jobs.accountId, accountId), eq(schema.jobs.status, 'active')))
+      .returning({ id: schema.jobs.id });
+    return { paused: paused.length };
+  });
+}
+
 export async function resumeJob(db: Db, accountId: string, jobId: string, now: Date): Promise<Job> {
   const job = await getJob(db, accountId, jobId);
   if (job.status === 'completed')
