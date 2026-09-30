@@ -115,7 +115,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         address beneficiary_,
         uint64 ttl_,
         address[] calldata tokens_,
-        string calldata reason_
+        string memory reason_
     ) public {
         if (_initialized) revert AlreadyInitialized();
         _initialized = true;

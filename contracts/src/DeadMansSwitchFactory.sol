@@ -40,7 +40,7 @@ contract DeadMansSwitchFactory {
         uint64 ttl,
         address[] calldata tokens,
         bytes32 salt,
-        string calldata reason
+        string memory reason
     ) public payable returns (address payable switchAddress) {
         switchAddress = payable(Clones.cloneDeterministic(implementation, _salt(msg.sender, salt)));
         _ownerSwitches[msg.sender].push(switchAddress);
