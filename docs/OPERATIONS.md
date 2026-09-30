@@ -376,6 +376,21 @@ prints the real deterministic CREATE2 address (under `--broadcast` it differs fr
 one, so trust this printed line). Verify it before wiring the keeper:
 `cast call 0xFAC… "totalSwitches()(uint256)" --rpc-url base_sepolia` should return `0`.
 
+Verify the source on Basescan (free; a switch holds funds, so people should be able to read it).
+Add `--verify --etherscan-api-key "$ETHERSCAN_API_KEY"` to the deploy, or afterwards verify the
+factory and the implementation (the clones are EIP-1167 proxies and link to the verified
+implementation automatically):
+
+```sh
+export ETHERSCAN_API_KEY=…
+IMPL=$(cast call 0xFAC… "implementation()(address)" --rpc-url base_sepolia)
+forge verify-contract 0xFAC… src/DeadMansSwitchFactory.sol:DeadMansSwitchFactory --chain 84532 --watch
+forge verify-contract "$IMPL" src/DeadMansSwitch.sol:DeadMansSwitch --chain 84532 --watch
+```
+
+A `Pending in queue` timeout is not a failure — the submission is queued; re-check with
+`forge verify-check <GUID> --chain 84532` or open the address on the explorer. Mainnet: `--chain 8453`.
+
 ### B. Enable the keeper (server)
 
 In `/opt/time2live/.env`:

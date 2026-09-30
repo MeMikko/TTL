@@ -107,3 +107,23 @@ The script prints `KEEPER_FACTORY_ADDRESS` (the real deterministic CREATE2 addre
 `--broadcast` this differs from the address shown in simulation, so trust this printed line) and
 `KEEPER_FROM_BLOCK`. Set both for the keeper (see `docs/OPERATIONS.md`), and verify the address
 with `cast call <addr> "totalSwitches()(uint256)" --rpc-url base_sepolia` (expect `0`).
+
+### Verify on the block explorer
+
+Publishing the source on Basescan matters: a switch holds funds, so people should be able to read
+it before depositing. It is free. `--verify` on the deploy above does it in one step; to verify an
+already-deployed contract, verify the **factory and the implementation** (the clones are EIP-1167
+minimal proxies — Basescan then auto-detects them and links to the verified implementation, so
+every switch becomes readable). You need an Etherscan API key (the v2 key works across chains,
+Base included); `foundry.toml` supplies the compiler settings.
+
+```sh
+export ETHERSCAN_API_KEY=…
+IMPL=$(cast call <factory> "implementation()(address)" --rpc-url base_sepolia)
+forge verify-contract <factory> src/DeadMansSwitchFactory.sol:DeadMansSwitchFactory --chain 84532 --watch
+forge verify-contract "$IMPL"  src/DeadMansSwitch.sol:DeadMansSwitch               --chain 84532 --watch
+```
+
+Neither contract takes constructor arguments. If `--watch` times out with `Pending in queue`, the
+submission still succeeded — check with `forge verify-check <GUID> --chain 84532` or just open the
+address on the explorer a minute later. For mainnet use `--chain 8453`.
