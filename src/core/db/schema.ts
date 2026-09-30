@@ -364,7 +364,7 @@ export const creditsLedger = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
     deltaMicro: bigint('delta_micro', { mode: 'number' }).notNull(),
-    /** topup | run | monitor_month */
+    /** topup | run | monitor_month | testnet_reset */
     reason: text('reason').notNull(),
     /** Related object: payment id, run id or monitor id. */
     ref: text('ref'),

@@ -11,6 +11,7 @@ import { createDatabase, schema, type Db } from '../core/db/index.js';
 import { newId } from '../core/ids.js';
 import { createLinkToken } from '../core/telegram-link.js';
 import { createTelegramClient } from '../core/telegram.js';
+import { resetTestnetBilling } from '../core/testnet-reset.js';
 
 const USAGE = `Usage: admin <command> [options]
 
@@ -24,6 +25,10 @@ Commands:
   create-monitor <address> --name <n> --ttl <s> [--grace <s>] [--telegram]
                                                    Operator monitor (bypasses tier limits; creates
                                                    the account if needed). Prints the ping URL.
+  reset-testnet-billing [--confirm]                Before switching x402 to mainnet: zero all credits,
+                                                   clear activations and end paid monitor periods
+                                                   (bought with test USDC). Dry run without --confirm;
+                                                   refuses once any mainnet payment exists.
 
 Production: docker compose exec api node dist/bin/admin.js freeze acc_… --reason "abuse"
 Local:      npm run admin -- freeze acc_… --reason "abuse"`;
@@ -36,11 +41,12 @@ const { positionals, values } = parseArgs({
     ttl: { type: 'string' },
     grace: { type: 'string', default: '60' },
     telegram: { type: 'boolean', default: false },
+    confirm: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h' },
   },
 });
 const [command, target] = positionals;
-const needsTarget = command !== 'telegram-webhook';
+const needsTarget = command !== 'telegram-webhook' && command !== 'reset-testnet-billing';
 
 if (values.help || !command || (needsTarget && !target)) {
   console.log(USAGE);
@@ -84,6 +90,18 @@ async function createOperatorMonitor(db: Db, config: Config, address: string) {
   console.log(`Ping URL: ${config.PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/heartbeat/${monitor!.id}`);
 }
 
+async function resetTestnet(db: Db) {
+  const apply = values.confirm;
+  const s = await resetTestnetBilling(db, new Date(), apply);
+  const lines = [
+    `${s.accountsWithCredits} account(s) with credits: $${(s.creditMicro / 1e6).toFixed(6)} total → $0`,
+    `${s.activatedAccounts} activated account(s) → unactivated`,
+    `${s.paidMonitors} paid monitor(s) → period ends now (renewed from credits or paused with an alert)`,
+  ];
+  console.log(apply ? 'Reset testnet billing:' : 'Dry run (nothing changed; add --confirm):');
+  for (const line of lines) console.log(`  ${line}`);
+}
+
 async function accountCommand(db: Db, config: Config, cmd: string, idOrAddress: string) {
   const account = await findAccount(db, idOrAddress);
   if (!account) throw new Error(`No account found for ${idOrAddress}`);
@@ -123,6 +141,7 @@ const database = createDatabase(config.DATABASE_URL, 1);
 try {
   if (command === 'telegram-webhook') await registerTelegramWebhook(config);
   else if (command === 'create-monitor') await createOperatorMonitor(database.db, config, target!);
+  else if (command === 'reset-testnet-billing') await resetTestnet(database.db);
   else await accountCommand(database.db, config, command!, target!);
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
