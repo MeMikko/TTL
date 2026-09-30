@@ -151,6 +151,22 @@ packs. `GET /v1/billing` shows balance, tier and prices, `GET /v1/billing/paymen
 payments. Scheduled runs that cannot be paid are recorded as `skipped` (the job keeps its
 schedule and resumes producing runs as soon as there is allowance or credit).
 
+## On-chain dead man's switch (Base)
+
+For agents that hold funds, `contracts/` contains `DeadMansSwitchFactory` + `DeadMansSwitch`
+(Foundry, OpenZeppelin v5).
+
+- One isolated clone per switch holds ETH and up to 20 ERC-20s.
+- The agent or owner pings it; after `ttl` without a ping, anyone can `trigger()` and everything
+  goes to the beneficiary.
+- Once expired, the switch can't be revived or emptied by the owner.
+- Fee-on-transfer and rebasing tokens are handled.
+- Tested with unit, fuzz and invariant tests, and checked with Slither.
+
+The worker's **keeper** discovers switches from factory events and triggers expired ones (see
+`docs/OPERATIONS.md` §8c). Once configured, `GET /` and `/llms.txt` advertise the factory
+address. Details: [`contracts/README.md`](contracts/README.md).
+
 ## MCP server and discovery
 
 `POST /mcp` is a remote MCP server (Streamable HTTP, stateless, JSON responses). Tools:

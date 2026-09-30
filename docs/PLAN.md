@@ -4,7 +4,7 @@ Scheduling and liveness ("TTL") service for autonomous AI agents. Customers are 
 agent builders and the agents themselves: an agent must be able to discover the service,
 register and pay without a human in the loop.
 
-Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ (live at time2live.xyz), phase 4 (billing) ✅ — x402 enabled per environment via `X402_*`, phase 5 (discovery + MCP) ✅. This document is the source of truth for
+Status: **approved** (with amendments, see §11). Progress: phase 0 ✅, phase 1 ✅, phase 2 ✅, phase 3 ✅, phase 6 (infra) ✅ (live at time2live.xyz), phase 4 (billing) ✅ — x402 enabled per environment via `X402_*`, phase 5 (discovery + MCP) ✅, phase 7 (contract + keeper) ✅. This document is the source of truth for
 scope; update it when decisions change.
 
 ---
@@ -227,3 +227,22 @@ Each phase ends with passing tests, then commit + push.
   `/.well-known/mcp.json`) — SEP-2127 (`server-cards.json`, AI Catalog) is still in review, revisit
   when it lands. x402 Bazaar listing is not a well-known file: the CDP facilitator indexes
   resources at settlement (`extensions.bazaar`), so it comes with the mainnet facilitator.
+
+## 13. As built: contract + keeper (phase 7)
+
+- `contracts/`: Foundry, Solidity 0.8.30 (cancun), OpenZeppelin v5.7.0 and forge-std as git
+  submodules. `DeadMansSwitchFactory` deploys EIP-1167 clones via CREATE2 (address predictable per
+  owner + salt); the factory itself is deployed deterministically (same address on every chain).
+- Decisions beyond §8:
+  - **Expiry is final.** After the deadline, no ping or `setTtl` and no owner withdrawal; only
+    `trigger()`. This removes the owner/keeper race.
+  - `setTtl` counts as a ping.
+  - `trigger()` is failure-tolerant: a reverting token or ETH-rejecting beneficiary emits
+    `TransferFailed` and is left for `sweep()`, so one bad asset can't block the rest.
+  - `ReentrancyGuardTransient` (Base supports EIP-1153).
+- Tests: 31 unit and fuzz tests plus 4 invariants (handler-driven). Slither runs in CI with four
+  reviewed detector exclusions and fails on anything else.
+- Keeper (`src/worker/keeper.ts`, tables `keeper_cursors` and `keeper_switches`): discovery from
+  `SwitchCreated` logs with a confirmation depth and a resumable cursor; 30-minute refresh (below
+  the 1 h minimum TTL); simulate-then-send; fee cap; low-balance warning. Tested end to end
+  against anvil with the compiled contracts (CI installs Foundry).

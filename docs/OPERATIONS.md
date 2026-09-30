@@ -274,6 +274,51 @@ if it needs one, `X402_FACILITATOR_AUTHORIZATION` (sent as the `Authorization` h
 Payments are recorded in `payments`, balance movements in `credits_ledger`
 (`npm run admin -- show` shows the balance).
 
+## 8c. On-chain dead man's switch: deploy + keeper
+
+**Deploy the factory** (once per chain, from your own machine; details in `contracts/README.md`):
+
+```sh
+cd contracts
+cast wallet import deployer --interactive
+forge script script/Deploy.s.sol --rpc-url base_sepolia --account deployer --broadcast
+```
+
+The deployer wallet needs a little Base Sepolia ETH (faucet). Note the printed factory address
+and block. The address is the same on every chain.
+
+**Keeper hot wallet:** generate a fresh key just for the keeper (`cast wallet new`) and fund it
+with a few dollars of ETH. It only ever pays gas for `trigger()`, and its key lives only in the
+server's `.env`. Then add to `.env`:
+
+```sh
+KEEPER_ENABLED=true
+KEEPER_CHAIN_ID=84532                     # 8453 for Base mainnet
+KEEPER_RPC_URL=https://sepolia.base.org   # a provider URL (Alchemy/QuickNode) is more reliable
+KEEPER_FACTORY_ADDRESS=0x…
+KEEPER_FROM_BLOCK=<block printed by the deploy script>
+KEEPER_PRIVATE_KEY=0x…
+```
+
+`docker compose up -d --force-recreate worker`. The worker logs `keeper started`. It refuses to
+run against an RPC for the wrong chain.
+
+**How it works:** each `KEEPER_POLL_MS` (60 s) the keeper scans new `SwitchCreated` logs, in
+confirmed blocks only (`KEEPER_CONFIRMATIONS`), resuming from `keeper_cursors`. It re-reads
+switches that are due, or that it hasn't checked for 30 minutes, and calls `trigger()` on
+expired ones after simulating the call. A deadline can only move earlier through `setTtl`, which
+also pings (≥ now + 1 h), so the 30-minute refresh never misses an expiry.
+
+**Safety limits:**
+
+- The keeper sends nothing when the network max fee is above `KEEPER_MAX_FEE_GWEI` (default 1;
+  Base is usually ~0.01).
+- It logs `keeper balance low` below `KEEPER_MIN_BALANCE_ETH`.
+- State is in `keeper_switches` (`deadline`, `triggered_at`, `trigger_tx`, `last_error`).
+
+If the keeper is down, nothing is lost: `trigger()` is permissionless, and the next pass catches
+up.
+
 ## 9. Security checklist
 
 - Only Caddy publishes ports; Postgres has no `ports:` (Docker-published ports would bypass ufw).

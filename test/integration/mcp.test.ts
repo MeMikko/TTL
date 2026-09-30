@@ -231,4 +231,26 @@ describe('discovery', () => {
     const alias = await app.request('/.well-known/mcp.json');
     expect(await alias.json()).toEqual(body);
   });
+
+  it('advertises the switch contract once the factory is configured', async () => {
+    const app = buildApp(database, {
+      config: testConfig({
+        PUBLIC_BASE_URL: BASE,
+        KEEPER_CHAIN_ID: '84532',
+        KEEPER_FACTORY_ADDRESS: '0x2e877B58f992AC165143367617EBeEF93d6f1a8d',
+      }),
+      payments: null,
+    });
+    const root = (await (await app.request('/')).json()) as Record<string, unknown>;
+    expect(root.deadMansSwitchContract).toEqual({
+      chainId: 84532,
+      factory: '0x2e877B58f992AC165143367617EBeEF93d6f1a8d',
+      keeper: false,
+    });
+    const llms = await (await app.request('/llms.txt')).text();
+    expect(llms).toContain('## On-chain dead man');
+    expect(llms).toContain('0x2e877B58f992AC165143367617EBeEF93d6f1a8d');
+    // Without a factory the section is absent.
+    expect(await (await setup().app.request('/llms.txt')).text()).not.toContain('On-chain');
+  });
 });
