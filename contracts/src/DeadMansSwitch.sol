@@ -18,7 +18,8 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 ///  - **Triggered** (terminal): assets were sent to the beneficiary; `sweep()` forwards leftovers
 ///    (late deposits, tokens that failed or were not registered).
 ///
-/// Funds can only ever leave to the owner (`withdraw`, while live) or the beneficiary.
+/// Funds can only ever leave to the owner (`withdraw`, while live; or `approveCancel` upon mutual
+/// agreement) or the beneficiary (`trigger` / `sweep`).
 ///
 /// @dev Deployed as EIP-1167 clones by `DeadMansSwitchFactory`; `initialize` runs once in the
 /// clone's creation transaction. Not upgradeable.
@@ -43,7 +44,10 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     uint64 public ttl;
     uint64 public lastPing;
     bool public triggered;
+    bool public cancelProposed;
     bool private _initialized;
+
+    string public reason;
 
     address[] private _tokens;
     mapping(address token => bool) public isToken;
@@ -57,6 +61,9 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     event TtlChanged(uint64 ttl);
     event TokenAdded(address indexed token);
     event TokenRemoved(address indexed token);
+    event CancelProposed();
+    event CancelProposalRevoked();
+    event Cancelled(address indexed by);
     event Triggered(address indexed by, address indexed beneficiary);
     event Transferred(address indexed token, address indexed to, uint256 amount);
     event TransferFailed(address indexed token, uint256 amount);
@@ -65,12 +72,14 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     error AlreadyInitialized();
     error NotOwner();
     error NotAgentOrOwner();
+    error NotBeneficiary();
     error ZeroAddress();
     error InvalidTtl();
     error Expired();
     error NotExpired();
     error AlreadyTriggered();
     error NotTriggered();
+    error CancelNotProposed();
     error TooManyTokens();
     error TokenAlreadyAdded();
     error TokenNotRegistered();
@@ -92,10 +101,22 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         _initialized = true;
     }
 
-    /// @notice One-time setup, called by the factory in the clone's creation transaction.
+    /// @notice Backwards-compatible one-time setup without reason string.
     function initialize(address owner_, address agent_, address beneficiary_, uint64 ttl_, address[] calldata tokens_)
         external
     {
+        initialize(owner_, agent_, beneficiary_, ttl_, tokens_, "");
+    }
+
+    /// @notice One-time setup, called by the factory in the clone's creation transaction.
+    function initialize(
+        address owner_,
+        address agent_,
+        address beneficiary_,
+        uint64 ttl_,
+        address[] calldata tokens_,
+        string calldata reason_
+    ) public {
         if (_initialized) revert AlreadyInitialized();
         _initialized = true;
         if (owner_ == address(0) || agent_ == address(0) || beneficiary_ == address(0)) revert ZeroAddress();
@@ -105,6 +126,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         beneficiary = beneficiary_;
         ttl = ttl_;
         lastPing = uint64(block.timestamp);
+        reason = reason_;
         emit Initialized(owner_, agent_, beneficiary_, ttl_);
         for (uint256 i; i < tokens_.length; ++i) {
             _addToken(tokens_[i]);
@@ -218,6 +240,46 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
             }
         }
         emit TokenRemoved(token);
+    }
+
+    // ---- mutual cancellation ------------------------------------------------------------------
+
+    /// @notice Proposes mutual cancellation of the switch while live. Owner only.
+    function proposeCancel() external onlyOwner whileLive {
+        cancelProposed = true;
+        emit CancelProposed();
+    }
+
+    /// @notice Revokes a pending cancellation proposal. Owner only.
+    function revokeCancel() external onlyOwner whileLive {
+        cancelProposed = false;
+        emit CancelProposalRevoked();
+    }
+
+    /// @notice Confirms cancellation and returns all assets to the owner. Beneficiary only, while live.
+    /// Terminal: marks the switch triggered so it cannot be reused, pinged, or triggered again.
+    function approveCancel() external whileLive nonReentrant {
+        if (msg.sender != beneficiary) revert NotBeneficiary();
+        if (!cancelProposed) revert CancelNotProposed();
+        triggered = true;
+        cancelProposed = false;
+        address to = owner;
+        emit Cancelled(msg.sender);
+
+        uint256 n = _tokens.length;
+        for (uint256 i; i < n; ++i) {
+            IERC20 t = IERC20(_tokens[i]);
+            uint256 bal = _balanceOf(t);
+            if (bal == 0) continue;
+            if (t.trySafeTransfer(to, bal)) emit Transferred(address(t), to, bal);
+            else emit TransferFailed(address(t), bal);
+        }
+        uint256 eth = address(this).balance;
+        if (eth > 0) {
+            (bool ok,) = to.call{value: eth}("");
+            if (ok) emit Transferred(address(0), to, eth);
+            else emit TransferFailed(address(0), eth);
+        }
     }
 
     // ---- dead man's switch --------------------------------------------------------------------
