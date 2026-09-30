@@ -371,8 +371,10 @@ cast wallet import deployer --interactive          # paste the deployer private 
 forge script script/Deploy.s.sol --rpc-url base_sepolia --account deployer --broadcast
 ```
 
-Record from the output: `DeadMansSwitchFactory 0xFAC…` and
-`current block (use as KEEPER_FROM_BLOCK) <N>`.
+Record from the output: `KEEPER_FACTORY_ADDRESS 0xFAC…` and `KEEPER_FROM_BLOCK <N>`. The script
+prints the real deterministic CREATE2 address (under `--broadcast` it differs from the simulated
+one, so trust this printed line). Verify it before wiring the keeper:
+`cast call 0xFAC… "totalSwitches()(uint256)" --rpc-url base_sepolia` should return `0`.
 
 ### B. Enable the keeper (server)
 

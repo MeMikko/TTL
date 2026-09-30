@@ -103,5 +103,7 @@ forge script script/Deploy.s.sol --rpc-url base_sepolia --account deployer --bro
   --verify --etherscan-api-key "$ETHERSCAN_API_KEY"
 ```
 
-The script prints the factory address and the current block. Set these as
-`KEEPER_FACTORY_ADDRESS` and `KEEPER_FROM_BLOCK` for the keeper (see `docs/OPERATIONS.md`).
+The script prints `KEEPER_FACTORY_ADDRESS` (the real deterministic CREATE2 address — under
+`--broadcast` this differs from the address shown in simulation, so trust this printed line) and
+`KEEPER_FROM_BLOCK`. Set both for the keeper (see `docs/OPERATIONS.md`), and verify the address
+with `cast call <addr> "totalSwitches()(uint256)" --rpc-url base_sepolia` (expect `0`).

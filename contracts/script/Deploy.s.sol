@@ -8,15 +8,24 @@ import {DeadMansSwitchFactory} from "../src/DeadMansSwitchFactory.sol";
 /// address on every chain (Base Sepolia, Base).
 ///
 ///   forge script script/Deploy.s.sol --rpc-url base_sepolia --account deployer --broadcast --verify
+///
+/// Under `--broadcast`, `new{salt}` is routed through the canonical CREATE2 deployer
+/// (0x4e59...), so the real on-chain address is CREATE2(deployer, SALT, initCodeHash) — NOT the
+/// address the script computes in simulation from the sender. We compute and print the real one so
+/// there is no ambiguity (verify with `cast call <addr> "totalSwitches()(uint256)"`).
 contract Deploy is Script {
     bytes32 constant SALT = keccak256("time2live.DeadMansSwitchFactory.v1");
 
     function run() external returns (DeadMansSwitchFactory factory) {
+        address predicted = vm.computeCreate2Address(SALT, keccak256(type(DeadMansSwitchFactory).creationCode));
+        console.log("factory (deterministic CREATE2 address)", predicted);
+
         vm.startBroadcast();
         factory = new DeadMansSwitchFactory{salt: SALT}();
         vm.stopBroadcast();
-        console.log("DeadMansSwitchFactory", address(factory));
-        console.log("implementation", factory.implementation());
-        console.log("current block (use as KEEPER_FROM_BLOCK)", block.number);
+
+        console.log("implementation", DeadMansSwitchFactory(predicted).implementation());
+        console.log("KEEPER_FACTORY_ADDRESS", predicted);
+        console.log("KEEPER_FROM_BLOCK", block.number);
     }
 }
