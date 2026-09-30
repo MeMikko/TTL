@@ -183,6 +183,8 @@ For agents that hold funds, `contracts/` contains `DeadMansSwitchFactory` + `Dea
   goes to the beneficiary.
 - Once expired, the switch can't be revived or emptied by the owner.
 - Fee-on-transfer and rebasing tokens are handled.
+- Optional `triggerRewardBps` (≤ 5%) pays whoever calls `trigger()`, so a funded switch's liveness
+  doesn't depend on our keeper — anyone (or an MEV bot) is incentivised to trigger it on time.
 - Tested with unit, fuzz and invariant tests, and checked with Slither.
 
 The worker's **keeper** discovers switches from factory events and triggers expired ones (see
