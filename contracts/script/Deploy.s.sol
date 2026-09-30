@@ -24,7 +24,10 @@ contract Deploy is Script {
         factory = new DeadMansSwitchFactory{salt: SALT}();
         vm.stopBroadcast();
 
-        console.log("implementation", DeadMansSwitchFactory(predicted).implementation());
+        // Read from the returned handle, not `predicted`: in simulation the salted deploy lands at a
+        // script-derived CREATE2 address (the handle), while `predicted` — the real on-chain address
+        // reached via the canonical deployer under `--broadcast` — has no code yet in simulation.
+        console.log("implementation", factory.implementation());
         console.log("KEEPER_FACTORY_ADDRESS", predicted);
         console.log("KEEPER_FROM_BLOCK", block.number);
     }
