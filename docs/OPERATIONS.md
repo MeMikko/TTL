@@ -498,6 +498,19 @@ a USDC transfer to `X402_PAY_TO` appears.
 
 ### Promote to mainnet
 
+**First, undo what test USDC bought** (credits, activations and paid monitor periods are not
+tied to a network, so they would carry over as real service). On the server:
+
+```sh
+docker compose exec api node dist/bin/admin.js reset-testnet-billing            # dry run
+docker compose exec api node dist/bin/admin.js reset-testnet-billing --confirm
+```
+
+It zeroes every balance (logged as `testnet_reset` in `credits_ledger`), clears activations and
+ends paid monitor periods now: the worker then pauses those monitors with a `monitor.unpaid`
+alert, exactly as when credits run out. Accounts, keys, monitors, jobs and the payment history
+stay. It refuses once any mainnet payment is recorded. Run it right before switching `.env`.
+
 Once both pass and you trust them: rerun **A** with `--rpc-url base` (same factory address), set
 `KEEPER_CHAIN_ID=8453` with a mainnet RPC, and for x402 switch `X402_NETWORK=eip155:8453` with a
 mainnet facilitator (the public `x402.org` one is testnet-only; Coinbase CDP with
