@@ -1,0 +1,1 @@
+ALTER TABLE "keeper_switches" ADD COLUMN "skipped_at" timestamp with time zone;

@@ -139,6 +139,11 @@ const envSchema = z
     KEEPER_CONFIRMATIONS: z.coerce.number().int().min(0).max(1_000).default(5),
     /** Refuse to send when the network's max fee is above this (protects the hot wallet). */
     KEEPER_MAX_FEE_GWEI: z.coerce.number().positive().default(1),
+    /**
+     * Gas limit cap for one trigger(); switches that would need more are skipped (a 20-token
+     * switch needs ~0.9M). With KEEPER_MAX_FEE_GWEI it bounds the cost of any single trigger.
+     */
+    KEEPER_MAX_GAS: z.coerce.number().int().min(200_000).max(30_000_000).default(1_500_000),
     /** Warn in the logs below this keeper balance (ETH). */
     KEEPER_MIN_BALANCE_ETH: z.coerce.number().nonnegative().default(0.002),
 

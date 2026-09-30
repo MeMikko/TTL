@@ -344,8 +344,23 @@ also pings (≥ now + 1 h), so the 30-minute refresh never misses an expiry.
 
 - The keeper sends nothing when the network max fee is above `KEEPER_MAX_FEE_GWEI` (default 1;
   Base is usually ~0.01).
+- It never triggers an **empty** switch (no ETH and no balance of a registered token): creating
+  one costs an attacker gas, but triggering it would cost the keeper gas for nobody's benefit.
+  Such switches are marked `skipped_at` and re-checked only on the 30-minute refresh, so assets
+  deposited later still get delivered.
+- Every trigger is sent with an explicit gas limit (the node's estimate + 20%), and a switch whose
+  `trigger()` would need more than `KEEPER_MAX_GAS` (default 1,500,000; a full 20-token switch
+  needs ~0.9M) is skipped the same way. This stops a hostile token that burns all the gas its
+  `transfer` is given from draining the hot wallet: one trigger never costs more than
+  `KEEPER_MAX_GAS × KEEPER_MAX_FEE_GWEI` (0.0015 ETH at the defaults; ~0.000007 ETH at Base's
+  usual fee).
+- Expired switches that are not skipped are always checked first, so skipped switches and the
+  slow refresh cannot delay a real expiry.
+- Triggering stays permissionless: a skipped switch can still be triggered by its beneficiary or
+  anyone else.
 - It logs `keeper balance low` below `KEEPER_MIN_BALANCE_ETH`.
-- State is in `keeper_switches` (`deadline`, `triggered_at`, `trigger_tx`, `last_error`).
+- State is in `keeper_switches` (`deadline`, `triggered_at`, `trigger_tx`, `skipped_at`,
+  `last_error`).
 
 If the keeper is down, nothing is lost: `trigger()` is permissionless, and the next pass catches
 up.

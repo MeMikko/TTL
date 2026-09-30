@@ -68,3 +68,13 @@ contract BrokenToken is MockToken {
         super._update(from, to, value);
     }
 }
+
+/// @notice A hostile token whose transfers burn every bit of gas they are given (a keeper griefer).
+contract GasBombToken is MockToken {
+    function _update(address from, address to, uint256 value) internal override {
+        if (from != address(0)) {
+            while (true) {}
+        }
+        super._update(from, to, value);
+    }
+}

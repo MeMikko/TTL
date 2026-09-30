@@ -423,6 +423,11 @@ export const keeperSwitches = pgTable(
     triggeredAt: ts('triggered_at'),
     /** Our trigger() transaction, when we were the ones who triggered it. */
     triggerTx: text('trigger_tx'),
+    /**
+     * Set while an expired switch is deliberately left alone (nothing to transfer, or trigger()
+     * would need more gas than KEEPER_MAX_GAS); it is then only re-checked on the slow refresh.
+     */
+    skippedAt: ts('skipped_at'),
     lastError: text('last_error'),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
