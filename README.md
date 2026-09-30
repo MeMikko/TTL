@@ -211,6 +211,10 @@ Discovery: `GET /` (service summary and links), `GET /llms.txt`, `GET /openapi.j
 Server Card at `/.well-known/mcp/server-card.json` (alias `/.well-known/mcp.json`; SEP-1649
 format, generated from the live tool list).
 
+`GET /` uses content negotiation: browsers (`Accept: text/html`) get a lightweight landing page
+(single self-contained HTML file, no build step), while agents and `curl` get the JSON summary —
+so the discovery contract at `/` is unchanged for machines.
+
 ## Production deployment
 
 The service runs on a single Hetzner VPS with Docker Compose (api, worker, Postgres, Caddy for

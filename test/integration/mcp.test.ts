@@ -232,6 +232,28 @@ describe('discovery', () => {
     expect(await alias.json()).toEqual(body);
   });
 
+  it('serves an HTML landing page to browsers, JSON to everything else', async () => {
+    const { app } = setup();
+
+    const page = await app.request('/', { headers: { accept: 'text/html,application/xhtml+xml' } });
+    expect(page.status).toBe(200);
+    expect(page.headers.get('content-type')).toMatch(/text\/html/);
+    const html = await page.text();
+    expect(html).toMatch(/^<!doctype html>/i);
+    expect(html).toContain('time2live');
+    expect(html).toContain(`${BASE}/llms.txt`);
+    expect(html).toContain(`${BASE}/mcp`);
+    expect(html).toContain('$0.10'); // activation price rendered from config
+    expect(html).not.toContain('undefined');
+
+    // Agents and curl (no Accept, or a JSON Accept) still get the discovery JSON, unchanged.
+    for (const headers of [undefined, { accept: 'application/json' }]) {
+      const res = await app.request('/', headers ? { headers } : undefined);
+      expect(res.headers.get('content-type')).toMatch(/application\/json/);
+      expect((await res.json()) as Record<string, unknown>).toMatchObject({ name: 'time2live' });
+    }
+  });
+
   it('advertises the switch contract once the factory is configured', async () => {
     const app = buildApp(database, {
       config: testConfig({
