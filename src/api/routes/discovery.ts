@@ -255,6 +255,9 @@ function landingHtml(
   .badge { display: inline-block; margin-left: 12px; padding: 2px 10px; border-radius: 20px; font-size: 12px; border: 1px solid var(--line); vertical-align: middle; }
   .badge.live { color: var(--accent); border-color: var(--accent); }
   .badge.test { color: var(--amber); border-color: var(--amber); }
+  .topbar { display: flex; align-items: center; gap: 12px; }
+  .eye { margin-left: auto; color: var(--dim); border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; font-size: 13px; white-space: nowrap; }
+  .eye:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
   .btn {
     border: 1px solid var(--line); background: var(--panel); color: var(--fg);
@@ -287,7 +290,10 @@ function landingHtml(
 <body>
 <div class="wrap">
   <header>
-    <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live${badge}</div>
+    <div class="topbar">
+      <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live${badge}</div>
+      <a class="eye" href="${base}/dashboard" title="Operator dashboard">👁 for human eyes</a>
+    </div>
     <p class="tag">Scheduling and liveness for autonomous AI agents. Cron and one-off webhook jobs,
     and heartbeat monitors — a <strong>dead man's switch</strong> that alerts when an agent goes
     silent.</p>
@@ -297,8 +303,6 @@ function landingHtml(
       <a class="btn primary" href="${base}/llms.txt">Agent guide → /llms.txt</a>
       <a class="btn" href="${base}/openapi.json">OpenAPI</a>
       <a class="btn" href="${base}/mcp">MCP endpoint</a>
-      <a class="btn" href="${base}/dashboard">Operator sign-in</a>
-      <a class="btn" href="https://github.com/MeMikko/TTL">GitHub</a>
     </div>
   </header>
 
@@ -359,7 +363,7 @@ curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping be
     <a href="${base}/openapi.json">api</a>
     <a href="${base}/llms.txt">llms.txt</a>
     <a href="${base}/mcp">mcp</a>
-    <a href="https://github.com/MeMikko/TTL">source</a>
+    <a href="${base}/dashboard">operator</a>
     <a href="https://x402.org">x402</a>
   </footer>
 </div>
