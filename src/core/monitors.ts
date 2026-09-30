@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Db } from './db/index.js';
 import { schema } from './db/index.js';
 import type { Account, Monitor, MonitorStatus } from './db/schema.js';
@@ -339,6 +339,40 @@ export async function pauseMonitor(db: Db, accountId: string, id: string, now: D
       .where(eq(schema.monitors.id, m.id))
       .returning();
     return row!;
+  });
+}
+
+/**
+ * Emergency stop: pauses every non-paused monitor for the account (recording a `pause` event and
+ * cancelling pending alerts), in one transaction. Returns how many were paused. Billing is
+ * untouched: a paid monitor stays paid, and resuming it later follows the normal path.
+ */
+export async function pauseAllMonitors(
+  db: Db,
+  accountId: string,
+  now: Date,
+): Promise<{ paused: number }> {
+  return db.transaction(async (tx) => {
+    const active = await tx
+      .select({ id: schema.monitors.id, status: schema.monitors.status })
+      .from(schema.monitors)
+      .where(and(eq(schema.monitors.accountId, accountId), ne(schema.monitors.status, 'paused')));
+    if (active.length === 0) return { paused: 0 };
+    for (const m of active) await recordEvent(tx, m.id, m.status, 'paused', 'pause', now);
+    await tx
+      .update(schema.alertDeliveries)
+      .set({ status: 'cancelled', finishedAt: now, lastError: 'account paused' })
+      .where(
+        and(
+          eq(schema.alertDeliveries.accountId, accountId),
+          eq(schema.alertDeliveries.status, 'pending'),
+        ),
+      );
+    await tx
+      .update(schema.monitors)
+      .set({ status: 'paused', expiresAt: null, updatedAt: now })
+      .where(and(eq(schema.monitors.accountId, accountId), ne(schema.monitors.status, 'paused')));
+    return { paused: active.length };
   });
 }
 
