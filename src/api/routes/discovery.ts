@@ -32,24 +32,32 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   const app = new Hono<AppEnv>();
   const cache = 'public, max-age=300';
 
+  const summary = {
+    name: 'time2live',
+    description:
+      'Scheduling and liveness (TTL) service for autonomous AI agents: cron/one-off webhook ' +
+      "jobs and heartbeat monitors (dead man's switch). Register with an EVM wallet, pay with x402.",
+    version: VERSION,
+    links: {
+      openapi: `${base}/openapi.json`,
+      llms: `${base}/llms.txt`,
+      mcp: `${base}/mcp`,
+      mcpServerCard: `${base}/.well-known/mcp/server-card.json`,
+      health: `${base}/healthz`,
+    },
+    x402,
+    deadMansSwitchContract: onChain,
+  };
+
+  // Content negotiation: browsers get the landing page, agents and curl keep the JSON summary.
+  // The JSON at `/` is the discovery contract, so it must stay byte-for-byte for non-HTML clients.
   app.get('/', (c) => {
     c.header('cache-control', cache);
-    return c.json({
-      name: 'time2live',
-      description:
-        'Scheduling and liveness (TTL) service for autonomous AI agents: cron/one-off webhook ' +
-        "jobs and heartbeat monitors (dead man's switch). Register with an EVM wallet, pay with x402.",
-      version: VERSION,
-      links: {
-        openapi: `${base}/openapi.json`,
-        llms: `${base}/llms.txt`,
-        mcp: `${base}/mcp`,
-        mcpServerCard: `${base}/.well-known/mcp/server-card.json`,
-        health: `${base}/healthz`,
-      },
-      x402,
-      deadMansSwitchContract: onChain,
-    });
+    if ((c.req.header('accept') ?? '').includes('text/html')) {
+      c.header('content-type', 'text/html; charset=utf-8');
+      return c.body(landingHtml(base, x402.enabled ? deps.config.X402_NETWORK : null, onChain));
+    }
+    return c.json(summary);
   });
 
   app.get('/llms.txt', (c) => {
@@ -161,5 +169,178 @@ ${contract}
 
 - Monitor states: new → alive → dead (after ttlSeconds + graceSeconds without a ping) → alive; paused. Alerts: monitor.down, monitor.up, monitor.unpaid.
 - Job targets must be public HTTPS (private, loopback and metadata addresses are blocked, also after DNS resolution); redirects are not followed. Retries with exponential backoff; history kept 30 days.
+`;
+}
+
+function landingHtml(
+  base: string,
+  network: string | null,
+  onChain: { chainId: number; factory: string; keeper: boolean } | null,
+): string {
+  const activation = usd(PRICES.activationMicro);
+  const run = usd(PRICES.runMicro);
+  const monitor = usd(PRICES.monitorMonthMicro);
+  const packs = PRICES.packs.map((p) => `$${p}`).join(' · ');
+  const free = TIERS.free;
+  const unactivated = TIERS.unactivated;
+  const x402Line = network
+    ? `Live on <code>${network}</code>`
+    : 'Payments disabled on this instance';
+  const contractCard = onChain
+    ? `<div class="card">
+        <h3><span class="dot"></span>On-chain switch</h3>
+        <p>For funds, not just alerts. A Solidity dead man's switch on Base holds ETH and up to 20
+        ERC-20s; after the deadline <strong>anyone</strong> can trigger it and everything goes to the
+        beneficiary.</p>
+        <p class="mono small">factory ${onChain.factory}<br>chain ${onChain.chainId}${onChain.keeper ? ' · keeper on' : ''}</p>
+      </div>`
+    : '';
+
+  // All interpolated values come from our own config, so no user input reaches this template.
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>time2live — TTL &amp; scheduling for AI agents</title>
+<meta name="description" content="Scheduling and liveness (TTL) service for autonomous AI agents: cron/one-off webhook jobs and heartbeat monitors (dead man's switch). Wallet sign-in, x402 payments, remote MCP server.">
+<style>
+  :root {
+    --bg: #0a0e14; --panel: #111823; --line: #1e2a3a; --fg: #d7e0ea; --dim: #7d8ea3;
+    --accent: #35d07f; --amber: #f0b429; --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.65 var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { color: var(--amber); }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 72px 0 48px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 12px; font-size: 30px; font-weight: 600; letter-spacing: -0.5px; }
+  .pulse {
+    width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(53,208,127,.6); animation: pulse 2.4s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(53,208,127,.5); }
+    70% { box-shadow: 0 0 0 12px rgba(53,208,127,0); }
+    100% { box-shadow: 0 0 0 0 rgba(53,208,127,0); }
+  }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  .tag { margin: 20px 0 0; font-size: 17px; color: var(--fg); max-width: 60ch; }
+  .sub { margin: 10px 0 0; color: var(--dim); }
+  .cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+    padding: 9px 16px; border-radius: 8px; font-size: 14px;
+  }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  section { padding: 48px 0; border-bottom: 1px solid var(--line); }
+  h2 { font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); margin: 0 0 22px; }
+  h3 { font-size: 16px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); display: inline-block; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .card p { margin: 0 0 8px; color: var(--fg); }
+  .small { font-size: 12.5px; }
+  .dim { color: var(--dim); }
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; font-size: 13px; line-height: 1.7; margin: 0 0 14px;
+  }
+  pre .c { color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  td.price { color: var(--amber); white-space: nowrap; }
+  footer { padding: 40px 0 64px; color: var(--dim); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live</div>
+    <p class="tag">Scheduling and liveness for autonomous AI agents. Cron and one-off webhook jobs,
+    and heartbeat monitors — a <strong>dead man's switch</strong> that alerts when an agent goes
+    silent.</p>
+    <p class="sub">Agents register with an EVM wallet and pay with x402. No human account, no
+    dashboard, no card.</p>
+    <div class="cta">
+      <a class="btn primary" href="${base}/llms.txt">Agent guide → /llms.txt</a>
+      <a class="btn" href="${base}/openapi.json">OpenAPI</a>
+      <a class="btn" href="${base}/mcp">MCP endpoint</a>
+      <a class="btn" href="https://github.com/MeMikko/TTL">GitHub</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="dot"></span>Scheduled jobs</h3>
+        <p>Cron or one-off HTTP calls to your agent, HMAC-signed and retried with backoff. Full
+        run history, SSRF-guarded targets.</p>
+      </div>
+      <div class="card">
+        <h3><span class="dot"></span>Heartbeat monitors</h3>
+        <p>Your agent pings a URL on a schedule. Miss the window and time2live fires a
+        <code>monitor.down</code> alert by webhook or Telegram.</p>
+      </div>
+      <div class="card">
+        <h3><span class="dot"></span>Built for agents</h3>
+        <p>Remote MCP server and a compact <a href="${base}/llms.txt">/llms.txt</a>. Wallet
+        sign-in (SIWE), idempotency keys, rate limits.</p>
+      </div>
+      ${contractCard || `<div class="card"><h3><span class="dot"></span>Open &amp; discoverable</h3><p>OpenAPI 3.1, an MCP Server Card at <code>/.well-known/mcp.json</code>, and a JSON summary at this same URL for machines.</p></div>`}
+    </div>
+  </section>
+
+  <section>
+    <h2>For agents</h2>
+    <pre><span class="c"># 1. get a challenge, sign it with your wallet, exchange for an API key</span>
+curl -sX POST ${base}/v1/auth/challenge -d '{"address":"0x…","chainId":8453}'
+curl -sX POST ${base}/v1/auth/verify   -d '{"message":"…","signature":"0x…"}'
+
+<span class="c"># 2. create a dead man's switch and keep it alive</span>
+curl -sX POST ${base}/v1/monitors -H "Authorization: Bearer t2l_…" \\
+  -d '{"name":"agent-1","ttlSeconds":300}'          <span class="c"># → returns pingUrl</span>
+curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping before it expires</span></pre>
+    <p class="small dim">Prefer tools? Point any MCP client at <code>${base}/mcp</code>
+    (Streamable HTTP): <code>{"mcpServers":{"time2live":{"type":"http","url":"${base}/mcp"}}}</code>.
+    An agent with no key can call <code>register_challenge</code> → <code>register</code> itself.</p>
+  </section>
+
+  <section>
+    <h2>Pricing · ${x402Line}</h2>
+    <table>
+      <tr><th>Tier / action</th><th>What you get</th><th>Price</th></tr>
+      <tr><td>Free (unactivated)</td><td>${unactivated.monitors} monitor · ${unactivated.runsPerMonth} runs/month</td><td class="price">$0</td></tr>
+      <tr><td>Activation (one-off)</td><td>${free.monitors} monitors · ${free.runsPerMonth} runs/month</td><td class="price">${activation}</td></tr>
+      <tr><td>Extra run</td><td>beyond the monthly free allowance</td><td class="price">${run}</td></tr>
+      <tr><td>Extra monitor</td><td>per 30 days, from credits</td><td class="price">${monitor}</td></tr>
+      <tr><td>Credit packs</td><td>prepaid, USDC on Base</td><td class="price">${packs}</td></tr>
+    </table>
+    <p class="small dim">Over-quota calls answer <code>402</code> with an x402 <code>PAYMENT-REQUIRED</code>
+    challenge; pay and retry the same request. One round trip, no human.</p>
+  </section>
+
+  <footer>
+    <span>time2live</span>
+    <a href="${base}/healthz">status</a>
+    <a href="${base}/openapi.json">api</a>
+    <a href="${base}/llms.txt">llms.txt</a>
+    <a href="${base}/mcp">mcp</a>
+    <a href="https://github.com/MeMikko/TTL">source</a>
+    <a href="https://x402.org">x402</a>
+  </footer>
+</div>
+</body>
+</html>
 `;
 }
