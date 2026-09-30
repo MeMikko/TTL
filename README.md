@@ -112,9 +112,12 @@ curl -fsS -X POST http://localhost:3000/v1/heartbeat/mon_…
 - States: `new` (never pinged, never alerts) → `alive` → `dead` when no ping arrives within
   `ttlSeconds + graceSeconds` → `alive` again on the next ping. `paused` suppresses alerts;
   resuming starts a fresh window.
-- Alerts: `monitor.down` and `monitor.up` (recovery), as a signed webhook (same `T2L-Signature`
-  scheme as jobs, JSON body with the monitor snapshot) and/or a Telegram message. Retried with
-  backoff (6 attempts). Transitions are listed at `GET /v1/monitors/{id}/events` (30 days).
+- Alerts: `monitor.down` and `monitor.up` (recovery) over up to four independent channels — a
+  signed webhook (same `T2L-Signature` scheme as jobs, JSON body with the monitor snapshot), an
+  optional **secondary webhook** for redundancy, a Telegram message, and **email** via an external
+  provider (independent transport/infra, so one channel being down cannot silence the alert). Each
+  channel is delivered and retried separately with backoff (6 attempts). Email requires the server
+  to have `RESEND_API_KEY` set. Transitions are listed at `GET /v1/monitors/{id}/events` (30 days).
 - Telegram: `POST /v1/account/telegram/link` returns a `t.me` deep link; press Start in
   Telegram to link the chat, send `/stop` to unlink. Operators must set `TELEGRAM_BOT_TOKEN`,
   `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` and run `admin telegram-webhook` once.

@@ -86,15 +86,60 @@ describe('monitors API', () => {
     }
   });
 
-  it('applies the SSRF policy to alert webhooks', async () => {
+  it('applies the SSRF policy to both alert webhooks', async () => {
     const { post } = await setup({ WEBHOOK_DEV_ALLOW_LOCAL: 'false' });
+    for (const alerts of [
+      { webhookUrl: 'https://169.254.169.254/' },
+      { webhookUrl2: 'https://169.254.169.254/' },
+    ]) {
+      const res = await post('/v1/monitors', { name: 'x', ttlSeconds: 60, alerts });
+      expect(res.status, JSON.stringify(alerts)).toBe(400);
+      expect(await res.json()).toMatchObject({ error: { code: 'invalid_target' } });
+    }
+  });
+
+  it('rejects email alerts unless the server has email configured', async () => {
+    const { post } = await setup();
     const res = await post('/v1/monitors', {
       name: 'x',
       ttlSeconds: 60,
-      alerts: { webhookUrl: 'https://169.254.169.254/' },
+      alerts: { email: 'oncall@example.com' },
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: { code: 'invalid_target' } });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: { code: 'email_not_configured' } });
+
+    const bad = await post('/v1/monitors', {
+      name: 'x',
+      ttlSeconds: 60,
+      alerts: { email: 'not-an-email' },
+    });
+    expect(bad.status).toBe(400); // schema-level validation
+  });
+
+  it('stores and returns the independent secondary webhook and email when enabled', async () => {
+    const { post } = await setup({
+      WEBHOOK_DEV_ALLOW_LOCAL: 'true',
+      RESEND_API_KEY: 'test-key',
+      ALERT_EMAIL_FROM: 'time2live <alerts@time2live.xyz>',
+    });
+    const res = await post('/v1/monitors', {
+      name: 'agent-7',
+      ttlSeconds: 300,
+      alerts: {
+        webhookUrl: 'http://127.0.0.1:9/primary',
+        webhookUrl2: 'http://127.0.0.1:9/backup',
+        email: 'oncall@example.com',
+      },
+    });
+    expect(res.status).toBe(201);
+    expect((await res.json()) as MonitorBody).toMatchObject({
+      alerts: {
+        webhookUrl: 'http://127.0.0.1:9/primary',
+        webhookUrl2: 'http://127.0.0.1:9/backup',
+        telegram: false,
+        email: 'oncall@example.com',
+      },
+    });
   });
 
   it('is idempotent with Idempotency-Key', async () => {

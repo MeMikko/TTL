@@ -253,6 +253,26 @@ Create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERN
 `docker compose up -d api worker` and register the webhook once:
 `docker compose exec api node dist/bin/admin.js telegram-webhook`.
 
+## 8a. Email alerts (optional, recommended)
+
+An independent alert channel that does not share fate with customer webhooks or the Telegram API:
+it goes out through an external transactional-email provider (Resend-compatible HTTP API). This is
+the redundancy that keeps a dead man's switch honest — if a monitor's webhook endpoint is down,
+the email still fires. (If the whole VPS is down, the external uptime check in §7 is the backstop.)
+
+Set in `.env`:
+
+```sh
+RESEND_API_KEY=re_…
+ALERT_EMAIL_FROM=time2live <alerts@time2live.xyz>   # a verified sender/domain at the provider
+# EMAIL_API_BASE=https://api.resend.com             # override for a Resend-compatible provider
+```
+
+`docker compose up -d --force-recreate worker`. With it set, monitors may use `alerts.email`
+(and the API accepts it); without it, `alerts.email` is rejected with `422 email_not_configured`
+so a switch is never created believing it can email when it cannot. Agents can also register a
+second independent webhook via `alerts.webhookUrl2`, delivered separately from the primary.
+
 ## 8b. Payments (x402)
 
 Payments are off until `X402_ENABLED=true`. Start on **Base Sepolia**:

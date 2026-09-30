@@ -264,9 +264,30 @@ export const AlertsSchema = z
       description: 'Signed POST on monitor.down / monitor.up (same signature scheme as jobs).',
       example: 'https://ops.example.com/t2l-alerts',
     }),
+    webhookUrl2: z
+      .string()
+      .max(2048)
+      .nullable()
+      .default(null)
+      .openapi({
+        description:
+          'Optional independent secondary webhook, delivered separately — redundancy against one ' +
+          'downstream endpoint being down.',
+      }),
     telegram: z.boolean().default(false).openapi({
       description: 'Send alerts to the Telegram chat linked via POST /v1/account/telegram/link.',
     }),
+    email: z
+      .email()
+      .max(254)
+      .nullable()
+      .default(null)
+      .openapi({
+        description:
+          'Send alerts by email via an independent provider (different transport/infra from ' +
+          'webhooks and Telegram). Requires email to be enabled on the server.',
+        example: 'oncall@example.com',
+      }),
   })
   .openapi('Alerts');
 
@@ -288,7 +309,12 @@ export const CreateMonitorSchema = z
       .min(0)
       .max(7 * 24 * 3600)
       .default(60),
-    alerts: AlertsSchema.default({ webhookUrl: null, telegram: false }),
+    alerts: AlertsSchema.default({
+      webhookUrl: null,
+      webhookUrl2: null,
+      telegram: false,
+      email: null,
+    }),
   })
   .openapi('CreateMonitor');
 
@@ -306,7 +332,12 @@ export const UpdateMonitorSchema = z
       .min(0)
       .max(7 * 24 * 3600),
     alerts: z
-      .object({ webhookUrl: z.string().max(2048).nullable(), telegram: z.boolean() })
+      .object({
+        webhookUrl: z.string().max(2048).nullable(),
+        webhookUrl2: z.string().max(2048).nullable(),
+        telegram: z.boolean(),
+        email: z.email().max(254).nullable(),
+      })
       .partial(),
   })
   .partial()
@@ -325,7 +356,12 @@ export const MonitorSchema = z
     lastPingAt: z.iso.datetime().nullable(),
     expiresAt: z.iso.datetime().nullable(),
     deadSince: z.iso.datetime().nullable(),
-    alerts: z.object({ webhookUrl: z.string().nullable(), telegram: z.boolean() }),
+    alerts: z.object({
+      webhookUrl: z.string().nullable(),
+      webhookUrl2: z.string().nullable(),
+      telegram: z.boolean(),
+      email: z.string().nullable(),
+    }),
     billing: z
       .object({
         plan: z.enum(['free', 'paid']),

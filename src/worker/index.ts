@@ -5,6 +5,7 @@ import type { Database } from '../core/db/index.js';
 import type { Logger } from '../core/logger.js';
 import { RateLimiter } from '../core/rate-limit.js';
 import { renewPaidMonitors, sweepExpiredMonitors } from '../core/monitors.js';
+import { createEmailClient, type EmailClient } from '../core/email.js';
 import { createTelegramClient, type TelegramClient } from '../core/telegram.js';
 import { claimAlerts, processAlert, type AlertDeps } from './alerts.js';
 import { cleanupExpired } from './cleanup.js';
@@ -24,6 +25,7 @@ export interface WorkerDeps {
   /** Override the outbound client (tests). */
   httpClient?: HttpClient;
   telegram?: TelegramClient;
+  email?: EmailClient;
   /** Keeper override (tests); otherwise built from config when KEEPER_ENABLED. */
   keeper?: Keeper;
 }
@@ -84,7 +86,16 @@ export function createWorker(deps: WorkerDeps): Worker {
           apiBase: config.TELEGRAM_API_BASE,
         })
       : undefined);
-  const alertDeps: AlertDeps = { ...deliveryDeps, telegram };
+  const email =
+    deps.email ??
+    (config.RESEND_API_KEY && config.ALERT_EMAIL_FROM
+      ? createEmailClient({
+          apiKey: config.RESEND_API_KEY,
+          from: config.ALERT_EMAIL_FROM,
+          apiBase: config.EMAIL_API_BASE,
+        })
+      : undefined);
+  const alertDeps: AlertDeps = { ...deliveryDeps, telegram, email };
   const keeper =
     deps.keeper ??
     (config.KEEPER_ENABLED

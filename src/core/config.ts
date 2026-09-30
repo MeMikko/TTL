@@ -86,6 +86,16 @@ const envSchema = z
       .optional(),
     TELEGRAM_API_BASE: z.url().default('https://api.telegram.org'),
 
+    /**
+     * Email alerts via an external transactional-email provider (Resend-compatible HTTP API).
+     * Independent transport and infrastructure from Telegram and customer webhooks: a downstream
+     * channel being down no longer silences a dead-agent alert. Requires ALERT_EMAIL_FROM.
+     */
+    RESEND_API_KEY: z.string().min(1).optional(),
+    /** From address for alert emails, e.g. "time2live <alerts@time2live.xyz>". */
+    ALERT_EMAIL_FROM: z.string().min(1).optional(),
+    EMAIL_API_BASE: z.url().default('https://api.resend.com'),
+
     /** x402 payments. Disabled: quotas still apply, over-quota calls get a plain 402. */
     X402_ENABLED: z.stringbool().default(false),
     /** CAIP-2 network: eip155:84532 (Base Sepolia, testnet) or eip155:8453 (Base mainnet). */
@@ -153,6 +163,13 @@ const envSchema = z
           ctx.addIssue({ code: 'custom', path: [key], message: 'required when KEEPER_ENABLED' });
         }
       }
+    }
+    if (cfg.RESEND_API_KEY && !cfg.ALERT_EMAIL_FROM) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ALERT_EMAIL_FROM'],
+        message: 'required when RESEND_API_KEY is set',
+      });
     }
     if (cfg.TELEGRAM_BOT_TOKEN && (!cfg.TELEGRAM_BOT_USERNAME || !cfg.TELEGRAM_WEBHOOK_SECRET)) {
       ctx.addIssue({

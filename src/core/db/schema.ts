@@ -262,7 +262,11 @@ export const monitors = pgTable(
     expiresAt: ts('expires_at'),
     deadSince: ts('dead_since'),
     alertWebhookUrl: text('alert_webhook_url'),
+    /** Independent secondary webhook: redundancy against a single downstream endpoint being down. */
+    alertWebhookUrl2: text('alert_webhook_url2'),
     alertTelegram: boolean('alert_telegram').notNull().default(false),
+    /** Email alert via the external provider (independent transport from webhook/Telegram). */
+    alertEmail: text('alert_email'),
     /** 'free' = within the tier's monitor allowance; 'paid' = charged per 30 days from credits. */
     billing: text('billing', { enum: ['free', 'paid'] })
       .notNull()
@@ -316,7 +320,7 @@ export const alertDeliveries = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
     event: text('event', { enum: ['monitor.down', 'monitor.up', 'monitor.unpaid'] }).notNull(),
-    channel: text('channel', { enum: ['webhook', 'telegram'] }).notNull(),
+    channel: text('channel', { enum: ['webhook', 'webhook2', 'telegram', 'email'] }).notNull(),
     /** Snapshot of what is being reported (JSON). */
     payload: text('payload').notNull(),
     status: text('status', { enum: ALERT_STATUSES }).notNull().default('pending'),

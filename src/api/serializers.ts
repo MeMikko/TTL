@@ -93,7 +93,12 @@ export function serializeMonitor(m: Monitor, publicBaseUrl: string) {
     lastPingAt: iso(m.lastPingAt),
     expiresAt: iso(m.expiresAt),
     deadSince: iso(m.deadSince),
-    alerts: { webhookUrl: m.alertWebhookUrl, telegram: m.alertTelegram },
+    alerts: {
+      webhookUrl: m.alertWebhookUrl,
+      webhookUrl2: m.alertWebhookUrl2,
+      telegram: m.alertTelegram,
+      email: m.alertEmail,
+    },
     billing: { plan: m.billing, paidUntil: iso(m.paidUntil) },
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),

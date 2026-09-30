@@ -183,6 +183,7 @@ export function monitorRoutes(deps: AppDeps) {
     db,
     policy: targetPolicyFromConfig(deps.config),
     resolve: deps.dnsResolve,
+    emailConfigured: Boolean(deps.config.RESEND_API_KEY && deps.config.ALERT_EMAIL_FROM),
   };
   const pingLimiter = RateLimiter.perMinute(
     deps.config.RATE_LIMIT_PING_PER_MIN,
@@ -201,7 +202,9 @@ export function monitorRoutes(deps: AppDeps) {
         ttlSeconds: body.ttlSeconds,
         graceSeconds: body.graceSeconds,
         alertWebhookUrl: body.alerts.webhookUrl,
+        alertWebhookUrl2: body.alerts.webhookUrl2,
         alertTelegram: body.alerts.telegram,
+        alertEmail: body.alerts.email,
       },
       now(),
     );
@@ -256,7 +259,9 @@ export function monitorRoutes(deps: AppDeps) {
         ttlSeconds: body.ttlSeconds,
         graceSeconds: body.graceSeconds,
         alertWebhookUrl: body.alerts?.webhookUrl,
+        alertWebhookUrl2: body.alerts?.webhookUrl2,
         alertTelegram: body.alerts?.telegram,
+        alertEmail: body.alerts?.email,
       },
       now(),
     );

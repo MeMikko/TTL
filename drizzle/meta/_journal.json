@@ -43,6 +43,13 @@
       "when": 1790716225732,
       "tag": "0005_keeper",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790749932988,
+      "tag": "0006_monitor_alert_channels",
+      "breakpoints": true
     }
   ]
 }
