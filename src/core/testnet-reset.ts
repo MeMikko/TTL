@@ -31,10 +31,13 @@ export async function resetTestnetBilling(
   apply: boolean,
 ): Promise<TestnetResetSummary> {
   return db.transaction(async (tx) => {
+    // A payment counts as "real money" unless its network is a known testnet. `network` is NOT NULL
+    // today, so the `IS NULL` arm never matches; it is defensive belt-and-suspenders so that, if the
+    // column ever became nullable, an unlabelled payment would make us refuse rather than wipe money.
     const [real] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(schema.payments)
-      .where(notInArray(schema.payments.network, TESTNETS));
+      .where(or(notInArray(schema.payments.network, TESTNETS), isNull(schema.payments.network)));
     if (real!.n > 0) {
       throw new Error(
         `Refusing: ${real!.n} payment(s) on a non-testnet network are recorded, so balances are real money`,
