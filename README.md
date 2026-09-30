@@ -1,9 +1,22 @@
 # time2live.xyz
 
-Scheduling and liveness ("TTL") service for autonomous AI agents. See [docs/PLAN.md](docs/PLAN.md)
-for scope, architecture and phases, and [docs/OPERATIONS.md](docs/OPERATIONS.md) for the Hetzner
-deployment, backups, restore and monitoring runbook. The full README (agent guide, MCP config, Hetzner deploy and
-restore) arrives in the final phase.
+Scheduling and liveness ("TTL") service for autonomous AI agents: cron and one-off HTTP webhook
+jobs (signed, retried) and heartbeat monitors — a **dead man's switch** that alerts when an agent
+stops pinging. Agents register with an EVM wallet and pay with [x402](https://x402.org), so there
+is no human account, no dashboard and no credit card in the loop. For agents holding funds there
+is also an on-chain dead man's switch contract on Base.
+
+Live at **https://time2live.xyz** · API `https://time2live.xyz/openapi.json` · remote MCP server
+`https://time2live.xyz/mcp`.
+
+**If you are an agent (or building one):** start at [`/llms.txt`](https://time2live.xyz/llms.txt)
+for a compact guide, then [Authentication](#authentication-wallet-sign-in) and either
+[Scheduled jobs](#scheduled-jobs) or [Heartbeat monitors](#heartbeat-monitors-dead-mans-switch).
+Prefer tools? See [MCP server and discovery](#mcp-server-and-discovery).
+
+**If you are running it:** [Local development](#local-development) below;
+[docs/OPERATIONS.md](docs/OPERATIONS.md) is the full Hetzner deploy, backup, restore and
+monitoring runbook; [docs/PLAN.md](docs/PLAN.md) has the scope, architecture and design decisions.
 
 ## Local development
 
@@ -197,6 +210,26 @@ message with its wallet and call `register`; later tools take the key via the he
 Discovery: `GET /` (service summary and links), `GET /llms.txt`, `GET /openapi.json` and the MCP
 Server Card at `/.well-known/mcp/server-card.json` (alias `/.well-known/mcp.json`; SEP-1649
 format, generated from the live tool list).
+
+## Production deployment
+
+The service runs on a single Hetzner VPS with Docker Compose (api, worker, Postgres, Caddy for
+automatic HTTPS). Images are built on the server from a git checkout — no registry or deploy
+secrets. [docs/OPERATIONS.md](docs/OPERATIONS.md) is the authoritative runbook; the essentials:
+
+- **Provision** (once): `deploy/create-server.ps1` creates the server and firewall; `provision.sh`
+  hardens it (SSH key only, no root login, ufw, fail2ban, unattended upgrades, Postgres not
+  exposed) and installs a read-only deploy key. Configure secrets in `/opt/time2live/.env`
+  (`ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, and optional `TELEGRAM_*`, `X402_*`, `KEEPER_*`).
+- **Deploy:** `deploy/deploy.ps1 -Ref main` (or `ssh time2live /opt/time2live/update.sh <sha>`) —
+  builds the image, runs migrations before starting, does a deep health check and rolls back on
+  failure, keeping the last 5 images.
+- **Backups:** nightly encrypted `pg_dump` to a Hetzner Storage Box via restic (systemd timer);
+  restore is documented and tested in OPERATIONS §6.
+- **Monitoring:** `GET /healthz?deep=1`, the worker's own self-heartbeat monitor, and an external
+  uptime check. Enabling x402 (§8b) and the on-chain keeper (§8c) is optional and off by default.
+
+Secrets live only in `/opt/time2live/.env` on the server, never in the repo.
 
 ## Admin
 
