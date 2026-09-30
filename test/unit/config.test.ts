@@ -28,6 +28,50 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...base, PORT: '8080' }).PORT).toBe(8080);
   });
 
+  it('rejects a mixed testnet/mainnet deploy (x402 vs keeper chains)', () => {
+    const keeper = {
+      KEEPER_ENABLED: 'true',
+      KEEPER_RPC_URL: 'https://mainnet.base.org',
+      KEEPER_FACTORY_ADDRESS: '0x4b19ee2a3de2521a3adc901989944c209c0a60ea',
+      KEEPER_PRIVATE_KEY: '0x' + '1'.repeat(64),
+    };
+    const x402 = {
+      X402_ENABLED: 'true',
+      X402_PAY_TO: '0x4b19ee2a3de2521a3adc901989944c209c0a60ea',
+    };
+    // x402 on mainnet, keeper on Sepolia → error.
+    expect(() =>
+      loadConfig({
+        ...base,
+        ...x402,
+        X402_NETWORK: 'eip155:8453',
+        ...keeper,
+        KEEPER_CHAIN_ID: '84532',
+      }),
+    ).toThrow(/KEEPER_CHAIN_ID/);
+    // Same network → fine.
+    expect(
+      loadConfig({
+        ...base,
+        ...x402,
+        X402_NETWORK: 'eip155:8453',
+        ...keeper,
+        KEEPER_CHAIN_ID: '8453',
+      }).KEEPER_CHAIN_ID,
+    ).toBe(8453);
+    // Local keeper chain is exempt.
+    expect(() =>
+      loadConfig({
+        ...base,
+        ...x402,
+        X402_NETWORK: 'eip155:8453',
+        ...keeper,
+        KEEPER_CHAIN_ID: '31337',
+        KEEPER_RPC_URL: 'http://127.0.0.1:8545',
+      }),
+    ).not.toThrow();
+  });
+
   it('rejects a missing DATABASE_URL', () => {
     expect(() => loadConfig({ ENCRYPTION_KEY: base.ENCRYPTION_KEY })).toThrow(ConfigError);
   });

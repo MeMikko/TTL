@@ -164,6 +164,18 @@ const envSchema = z
         }
       }
     }
+    // Guardrail against an incoherent half-testnet/half-mainnet deployment: if both x402 and the
+    // keeper are on, they must be on the same real network (the local chain 31337 is exempt).
+    if (cfg.X402_ENABLED && cfg.KEEPER_ENABLED && cfg.KEEPER_CHAIN_ID !== 31337) {
+      const x402ChainId = Number(cfg.X402_NETWORK.split(':')[1]);
+      if (x402ChainId !== cfg.KEEPER_CHAIN_ID) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['KEEPER_CHAIN_ID'],
+          message: `must match X402_NETWORK chain ${x402ChainId} (no mixed testnet/mainnet deploys)`,
+        });
+      }
+    }
     if (cfg.RESEND_API_KEY && !cfg.ALERT_EMAIL_FROM) {
       ctx.addIssue({
         code: 'custom',

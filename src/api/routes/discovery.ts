@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { networkInfo, type NetworkInfo } from '../../core/network.js';
 import { PRICES, TIERS, usd } from '../../core/plans.js';
 import { VERSION } from '../../core/version.js';
 import type { AppDeps, AppEnv } from '../context.js';
@@ -29,6 +30,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
         keeper: deps.config.KEEPER_ENABLED,
       }
     : null;
+  const net = networkInfo(deps.config);
   const app = new Hono<AppEnv>();
   const cache = 'public, max-age=300';
 
@@ -38,6 +40,8 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
       'Scheduling and liveness (TTL) service for autonomous AI agents: cron/one-off webhook ' +
       "jobs and heartbeat monitors (dead man's switch). Register with an EVM wallet, pay with x402.",
     version: VERSION,
+    // Prominent trust signal: is this a live (real-money) or a testnet deployment?
+    network: { mode: net.mode, label: net.label, chain: net.chain },
     links: {
       openapi: `${base}/openapi.json`,
       llms: `${base}/llms.txt`,
@@ -56,7 +60,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
     c.header('cache-control', cache);
     if ((c.req.header('accept') ?? '').includes('text/html')) {
       c.header('content-type', 'text/html; charset=utf-8');
-      return c.body(landingHtml(base, x402.enabled ? deps.config.X402_NETWORK : null, onChain));
+      return c.body(landingHtml(base, net, onChain));
     }
     return c.json(summary);
   });
@@ -64,16 +68,14 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   app.get('/llms.txt', (c) => {
     c.header('cache-control', cache);
     c.header('content-type', 'text/markdown; charset=utf-8');
-    return c.body(
-      llmsTxt(base, deps.config.X402_ENABLED ? deps.config.X402_NETWORK : null, onChain),
-    );
+    return c.body(llmsTxt(base, net, onChain));
   });
 
   // Human operator dashboard: sign in with the wallet, view the fleet read-only, emergency stop.
   app.get('/dashboard', (c) => {
     c.header('cache-control', cache);
     c.header('content-type', 'text/html; charset=utf-8');
-    return c.body(dashboardHtml(base));
+    return c.body(dashboardHtml(base, net));
   });
 
   let tools: Promise<ToolList> | undefined;
@@ -129,9 +131,10 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
 
 function llmsTxt(
   base: string,
-  network: string | null,
+  net: NetworkInfo,
   onChain: { chainId: number; factory: string; keeper: boolean } | null,
 ): string {
+  const network = net.x402Network;
   const contract = onChain
     ? `
 ## On-chain dead man's switch (Base, chain ${onChain.chainId})
@@ -144,6 +147,8 @@ For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`.
   return `# time2live
 
 > Scheduling and liveness (TTL) service for autonomous AI agents. Cron or one-off HTTP webhook jobs (signed, retried) and heartbeat monitors — a dead man's switch that alerts by webhook or Telegram when an agent stops pinging. Agents register with an EVM wallet and pay with x402 (USDC on Base); no human account needed.
+
+**Network: ${net.label}.**
 
 Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`. Auth: \`Authorization: Bearer t2l_…\`. Every create call accepts \`Idempotency-Key\`.
 
@@ -182,7 +187,7 @@ ${contract}
 
 function landingHtml(
   base: string,
-  network: string | null,
+  net: NetworkInfo,
   onChain: { chainId: number; factory: string; keeper: boolean } | null,
 ): string {
   const activation = usd(PRICES.activationMicro);
@@ -191,9 +196,15 @@ function landingHtml(
   const packs = PRICES.packs.map((p) => `$${p}`).join(' · ');
   const free = TIERS.free;
   const unactivated = TIERS.unactivated;
-  const x402Line = network
-    ? `Live on <code>${network}</code>`
+  const x402Line = net.x402Network
+    ? `${net.mode === 'live' ? 'Live on' : 'Testnet —'} <code>${net.x402Network}</code>`
     : 'Payments disabled on this instance';
+  const badge =
+    net.mode === 'live'
+      ? '<span class="badge live">● Live · Base mainnet</span>'
+      : net.mode === 'test'
+        ? `<span class="badge test">● Testnet · ${net.chain}</span>`
+        : '<span class="badge test">● Free / evaluation</span>';
   const contractCard = onChain
     ? `<div class="card">
         <h3><span class="dot"></span>On-chain switch</h3>
@@ -241,6 +252,9 @@ function landingHtml(
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
   .tag { margin: 20px 0 0; font-size: 17px; color: var(--fg); max-width: 60ch; }
   .sub { margin: 10px 0 0; color: var(--dim); }
+  .badge { display: inline-block; margin-left: 12px; padding: 2px 10px; border-radius: 20px; font-size: 12px; border: 1px solid var(--line); vertical-align: middle; }
+  .badge.live { color: var(--accent); border-color: var(--accent); }
+  .badge.test { color: var(--amber); border-color: var(--amber); }
   .cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
   .btn {
     border: 1px solid var(--line); background: var(--panel); color: var(--fg);
@@ -273,7 +287,7 @@ function landingHtml(
 <body>
 <div class="wrap">
   <header>
-    <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live</div>
+    <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live${badge}</div>
     <p class="tag">Scheduling and liveness for autonomous AI agents. Cron and one-off webhook jobs,
     and heartbeat monitors — a <strong>dead man's switch</strong> that alerts when an agent goes
     silent.</p>
@@ -354,7 +368,13 @@ curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping be
 `;
 }
 
-function dashboardHtml(base: string): string {
+function dashboardHtml(base: string, net: NetworkInfo): string {
+  const badge =
+    net.mode === 'live'
+      ? '<span class="netbadge live">● Live · Base mainnet</span>'
+      : net.mode === 'test'
+        ? `<span class="netbadge test">● Testnet · ${net.chain}</span>`
+        : '<span class="netbadge test">● Free / eval</span>';
   // Only `base` is interpolated (our own config). All account data is rendered client-side with
   // textContent, so monitor/job names cannot inject markup.
   return `<!doctype html>
@@ -376,6 +396,9 @@ function dashboardHtml(base: string): string {
   header{padding:36px 0 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600}
   .pulse{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 2.4s infinite}
+  .netbadge{margin-left:10px;padding:2px 10px;border-radius:20px;font-size:12px;border:1px solid var(--line);font-weight:400}
+  .netbadge.live{color:var(--accent);border-color:var(--accent)}
+  .netbadge.test{color:var(--amber);border-color:var(--amber)}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(53,208,127,.5)}70%{box-shadow:0 0 0 10px rgba(53,208,127,0)}100%{box-shadow:0 0 0 0 rgba(53,208,127,0)}}
   @media (prefers-reduced-motion:reduce){.pulse{animation:none}}
   .grow{flex:1}
@@ -408,7 +431,7 @@ function dashboardHtml(base: string): string {
 <div class="wrap">
   <header>
     <span class="pulse"></span>
-    <div class="brand">time2live<span class="muted" style="font-weight:400">/ operator</span></div>
+    <div class="brand">time2live<span class="muted" style="font-weight:400">/ operator</span>${badge}</div>
     <div class="grow"></div>
     <span id="who" class="muted"></span>
     <button id="signout" class="hide">Sign out</button>
