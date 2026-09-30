@@ -38,6 +38,7 @@ describe('loadConfig', () => {
     const x402 = {
       X402_ENABLED: 'true',
       X402_PAY_TO: '0x4b19ee2a3de2521a3adc901989944c209c0a60ea',
+      X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
     };
     // x402 on mainnet, keeper on Sepolia → error.
     expect(() =>
@@ -70,6 +71,43 @@ describe('loadConfig', () => {
         KEEPER_RPC_URL: 'http://127.0.0.1:8545',
       }),
     ).not.toThrow();
+  });
+
+  it('validates the CDP facilitator key and URL', () => {
+    const cdp = {
+      X402_ENABLED: 'true',
+      X402_PAY_TO: '0x4b19ee2a3de2521a3adc901989944c209c0a60ea',
+      X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
+      CDP_API_KEY_ID: 'key-id',
+      CDP_API_KEY_SECRET: '-----BEGIN EC PRIVATE KEY-----\\nabc\\n-----END EC PRIVATE KEY-----',
+    };
+    // A one-line PEM with \n escapes is unescaped.
+    expect(loadConfig({ ...base, ...cdp }).CDP_API_KEY_SECRET).toBe(
+      '-----BEGIN EC PRIVATE KEY-----\nabc\n-----END EC PRIVATE KEY-----',
+    );
+    expect(() => loadConfig({ ...base, ...cdp, CDP_API_KEY_SECRET: undefined })).toThrow(
+      /CDP_API_KEY_SECRET/,
+    );
+    expect(() => loadConfig({ ...base, ...cdp, CDP_API_KEY_ID: undefined })).toThrow(
+      /CDP_API_KEY_ID/,
+    );
+    expect(() =>
+      loadConfig({ ...base, ...cdp, X402_FACILITATOR_AUTHORIZATION: 'Bearer x' }),
+    ).toThrow(/not both/);
+    expect(() => loadConfig({ ...base, ...cdp, X402_FACILITATOR_URL: undefined })).toThrow(
+      /api\.cdp\.coinbase\.com/,
+    );
+  });
+
+  it('rejects the testnet-only x402.org facilitator on Base mainnet', () => {
+    const x402 = {
+      X402_ENABLED: 'true',
+      X402_PAY_TO: '0x4b19ee2a3de2521a3adc901989944c209c0a60ea',
+    };
+    expect(() => loadConfig({ ...base, ...x402, X402_NETWORK: 'eip155:8453' })).toThrow(
+      /testnets only/,
+    );
+    expect(loadConfig({ ...base, ...x402 }).X402_NETWORK).toBe('eip155:84532');
   });
 
   it('rejects a missing DATABASE_URL', () => {
