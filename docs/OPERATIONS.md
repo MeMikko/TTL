@@ -295,9 +295,20 @@ X402_PAY_TO=0x…          # wallet that receives USDC; keep its key off the ser
 `x402.enabled: true`. Test end to end with a wallet holding Sepolia USDC (Circle faucet): a
 second monitor on a fresh account must return 402 and succeed after paying $0.10.
 
-**Mainnet:** the public `https://x402.org/facilitator` supports testnets only. Use a mainnet
-facilitator (e.g. Coinbase CDP) and set `X402_NETWORK=eip155:8453`, `X402_FACILITATOR_URL` and,
-if it needs one, `X402_FACILITATOR_AUTHORIZATION` (sent as the `Authorization` header). The
+**Mainnet:** the public `https://x402.org/facilitator` supports testnets only (a mainnet config
+pointing at it is rejected at startup). Use Coinbase CDP, which serves Base and Base Sepolia:
+
+```sh
+X402_NETWORK=eip155:8453                  # eip155:84532 to try CDP on Sepolia first
+X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+CDP_API_KEY_ID=…                          # a CDP *Secret* API key (portal → API Keys),
+CDP_API_KEY_SECRET=…                      # not a Client API key
+```
+
+CDP accepts no static header: every verify/settle/supported call is sent with a fresh JWT (valid
+2 minutes, bound to that method and path) signed with the key, so leave
+`X402_FACILITATOR_AUTHORIZATION` unset — it is only for facilitators that take a static
+`Authorization` header. An EC (PEM) secret may be written on one line with `\n` escapes. The
 deployment's network mode (live / testnet / disabled) is derived from this and shown on `/`,
 `/llms.txt`, the landing page, the dashboard and the OpenAPI description, so it must reflect
 reality. If the keeper is also enabled it must be on the same network — a mixed testnet/mainnet
@@ -489,8 +500,8 @@ a USDC transfer to `X402_PAY_TO` appears.
 
 Once both pass and you trust them: rerun **A** with `--rpc-url base` (same factory address), set
 `KEEPER_CHAIN_ID=8453` with a mainnet RPC, and for x402 switch `X402_NETWORK=eip155:8453` with a
-mainnet facilitator (the public `x402.org` one is testnet-only; e.g. Coinbase CDP, plus its
-`X402_FACILITATOR_AUTHORIZATION`). Consider a light audit before holding significant funds in the
+mainnet facilitator (the public `x402.org` one is testnet-only; Coinbase CDP with
+`CDP_API_KEY_ID`/`CDP_API_KEY_SECRET`, see §8b). Consider a light audit before holding significant funds in the
 contract.
 
 ## 9. Security checklist

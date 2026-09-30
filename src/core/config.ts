@@ -107,8 +107,20 @@ const envSchema = z
       .optional(),
     /** The public x402.org facilitator supports testnets only; mainnet needs another one. */
     X402_FACILITATOR_URL: z.url().default('https://x402.org/facilitator'),
-    /** Optional "Authorization" header value for facilitators that require one. */
+    /** Optional static "Authorization" header value for facilitators that accept one. */
     X402_FACILITATOR_AUTHORIZATION: z.string().min(1).optional(),
+    /**
+     * Coinbase CDP Secret API key for the CDP facilitator
+     * (X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402). CDP takes no static
+     * header: every verify/settle/supported call is sent with a fresh JWT signed with this key.
+     */
+    CDP_API_KEY_ID: z.string().min(1).optional(),
+    /** Ed25519 (base64) or EC (PEM) secret; `\n` escapes are accepted for a one-line PEM. */
+    CDP_API_KEY_SECRET: z
+      .string()
+      .min(1)
+      .transform((s) => s.replaceAll('\\n', '\n'))
+      .optional(),
 
     /**
      * Keeper for the on-chain DeadMansSwitch: the worker discovers switches from the factory's
@@ -156,6 +168,35 @@ const envSchema = z
         code: 'custom',
         path: ['X402_PAY_TO'],
         message: 'required when X402_ENABLED',
+      });
+    }
+    if (Boolean(cfg.CDP_API_KEY_ID) !== Boolean(cfg.CDP_API_KEY_SECRET)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [cfg.CDP_API_KEY_ID ? 'CDP_API_KEY_SECRET' : 'CDP_API_KEY_ID'],
+        message: 'CDP_API_KEY_ID and CDP_API_KEY_SECRET must be set together',
+      });
+    }
+    if (cfg.CDP_API_KEY_ID && cfg.X402_FACILITATOR_AUTHORIZATION) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['X402_FACILITATOR_AUTHORIZATION'],
+        message: 'set either the CDP API key or a static authorization header, not both',
+      });
+    }
+    const facilitatorHost = new URL(cfg.X402_FACILITATOR_URL).hostname;
+    if (cfg.CDP_API_KEY_ID && facilitatorHost === 'x402.org') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['X402_FACILITATOR_URL'],
+        message: 'CDP API key set: use https://api.cdp.coinbase.com/platform/v2/x402',
+      });
+    }
+    if (cfg.X402_ENABLED && cfg.X402_NETWORK === 'eip155:8453' && facilitatorHost === 'x402.org') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['X402_FACILITATOR_URL'],
+        message: 'the x402.org facilitator serves testnets only; Base mainnet needs e.g. CDP',
       });
     }
     if (cfg.KEEPER_ENABLED) {

@@ -15,6 +15,7 @@ import type {
   SettleResponse,
 } from '@x402/core/types';
 import { ExactEvmScheme } from '@x402/evm/exact/server';
+import { generateJwt } from '@coinbase/cdp-sdk/auth';
 import type { Config } from './config.js';
 import { productLabel, productPriceMicro, usd, type Product } from './plans.js';
 
@@ -57,6 +58,49 @@ function firstLine(message: string | undefined, fallback: string): string {
   return line && !line.endsWith(':') ? line : fallback;
 }
 
+/**
+ * The facilitator that verifies and settles payments. With a CDP API key every call carries a
+ * fresh JWT bound to its method and path (CDP accepts no static header); otherwise an optional
+ * static Authorization header is sent.
+ */
+export function createFacilitatorClient(config: Config): FacilitatorClient {
+  if (config.CDP_API_KEY_ID && config.CDP_API_KEY_SECRET) {
+    const apiKeyId = config.CDP_API_KEY_ID;
+    const apiKeySecret = config.CDP_API_KEY_SECRET;
+    const { host, pathname } = new URL(config.X402_FACILITATOR_URL);
+    const base = pathname.replace(/\/$/, '');
+    // Mirrors @coinbase/cdp-sdk/x402's createCdpFacilitatorClient (that entry point pulls in
+    // optional x402 peers we don't use); the JWT itself comes from the SDK.
+    const auth = async (requestMethod: 'GET' | 'POST', requestPath: string) => ({
+      Authorization: `Bearer ${await generateJwt({ apiKeyId, apiKeySecret, requestMethod, requestHost: host, requestPath })}`,
+    });
+    return new HTTPFacilitatorClient({
+      url: config.X402_FACILITATOR_URL,
+      timeoutMs: 20_000,
+      createAuthHeaders: async () => {
+        const [verify, settle, supported] = await Promise.all([
+          auth('POST', `${base}/verify`),
+          auth('POST', `${base}/settle`),
+          auth('GET', `${base}/supported`),
+        ]);
+        return { verify, settle, supported };
+      },
+    });
+  }
+  return new HTTPFacilitatorClient({
+    url: config.X402_FACILITATOR_URL,
+    timeoutMs: 20_000,
+    ...(config.X402_FACILITATOR_AUTHORIZATION
+      ? {
+          createAuthHeaders: async () => {
+            const h = { Authorization: config.X402_FACILITATOR_AUTHORIZATION! };
+            return { verify: h, settle: h, supported: h };
+          },
+        }
+      : {}),
+  });
+}
+
 export function createPaymentGateway(
   config: Config,
   facilitator?: FacilitatorClient,
@@ -64,20 +108,7 @@ export function createPaymentGateway(
   if (!config.X402_ENABLED || !config.X402_PAY_TO) return undefined;
   const network = config.X402_NETWORK;
   const payTo = config.X402_PAY_TO;
-  const client =
-    facilitator ??
-    new HTTPFacilitatorClient({
-      url: config.X402_FACILITATOR_URL,
-      timeoutMs: 20_000,
-      ...(config.X402_FACILITATOR_AUTHORIZATION
-        ? {
-            createAuthHeaders: async () => {
-              const h = { Authorization: config.X402_FACILITATOR_AUTHORIZATION! };
-              return { verify: h, settle: h, supported: h };
-            },
-          }
-        : {}),
-    });
+  const client = facilitator ?? createFacilitatorClient(config);
   const server = new x402ResourceServer(client).register(network, new ExactEvmScheme());
 
   // Fetches the facilitator's supported kinds; retried on the next payment if it failed.
