@@ -246,6 +246,13 @@ Three independent layers:
 3. **Logs:** `docker compose logs` (JSON, rotated 10 MB × 5 per container). Caddy access logs
    are JSON on stdout as well.
 
+**Operator dashboard:** `https://<domain>/dashboard` lets the account owner connect their wallet,
+sign once (a 1 h operator session, not stored server-side) and see the fleet read-only, with
+**Pause everything** and **Revoke all API keys** emergency buttons. It needs no server
+configuration. The revoke button cuts every API key at once (agents are locked out); the operator
+session survives it, so you don't lock yourself out. Nothing here is required for the service to
+run — it is a supervisory convenience.
+
 ## 8. Telegram bot (optional)
 
 Create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` and

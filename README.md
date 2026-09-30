@@ -262,8 +262,18 @@ holding a key) can use them:
 - `POST /v1/account/keys/revoke-all` — revokes every API key, including the caller's, locking the
   agent out at once. Sign in again with the wallet to mint a new key.
 - `GET /v1/account/overview` — one read-only call returning account, tier, usage, credit balance,
-  job/monitor status counts, and the most recent monitors, jobs and payments — enough to render a
-  supervisory view without a dashboard.
+  job/monitor status counts, and the most recent monitors, jobs and payments.
+
+### Operator dashboard
+
+`GET /dashboard` is a lightweight browser page (single self-contained HTML file) where the human
+owner **connects their wallet, signs once, and supervises the fleet**: account, credits, monitors,
+jobs and payments, with the two emergency-stop buttons. Sign-in uses `POST /v1/auth/session`, which
+verifies a SIWE signature like `/v1/auth/verify` but returns a short-lived (1 h) **operator session
+token** (`t2ls_…`) instead of a persistent API key — nothing is stored server-side, and it
+deliberately survives `revoke-all`, so the human keeps access while the agent's keys are cut. The
+token authenticates the same endpoints as an API key (`Authorization: Bearer t2ls_…`); agents keep
+using API keys.
 
 `GET /healthz` checks the process only; `GET /healthz?deep=1` also checks Postgres and that a
 worker ticked within `HEALTH_MAX_TICK_AGE_MS` (503 otherwise) — point external uptime checks there.

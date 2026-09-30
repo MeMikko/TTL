@@ -1,9 +1,11 @@
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { createMiddleware } from 'hono/factory';
 import { hashApiKey, looksLikeApiKey } from '../../core/api-keys.js';
+import { parseEncryptionKey } from '../../core/crypto.js';
 import { schema } from '../../core/db/index.js';
 import { ApiError } from '../../core/errors.js';
 import type { RateLimiter } from '../../core/rate-limit.js';
+import { looksLikeSessionToken, verifyOperatorSession } from '../../core/session.js';
 import type { AppDeps, AppEnv } from '../context.js';
 import { applyRateLimit } from './rate-limit.js';
 
@@ -13,6 +15,7 @@ const LAST_USED_RESOLUTION_MS = 60_000;
 export function requireAuth(deps: AppDeps, keyLimiter: RateLimiter) {
   const now = deps.now ?? (() => new Date());
   const { db } = deps.database;
+  const sessionSecret = parseEncryptionKey(deps.config.ENCRYPTION_KEY);
 
   return createMiddleware<AppEnv>(async (c, next) => {
     const header = c.req.header('authorization') ?? '';
@@ -23,6 +26,25 @@ export function requireAuth(deps: AppDeps, keyLimiter: RateLimiter) {
         'WWW-Authenticate': 'Bearer',
       });
     }
+
+    // Wallet operator session (browser dashboard): stateless, resolves to the account directly.
+    if (looksLikeSessionToken(token)) {
+      const accountId = verifyOperatorSession(sessionSecret, token, now());
+      if (!accountId) throw new ApiError(401, 'unauthorized', 'Invalid or expired session');
+      const [account] = await db
+        .select()
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId));
+      if (!account) throw new ApiError(401, 'unauthorized', 'Invalid or expired session');
+      applyRateLimit(c, keyLimiter.consume(`session:${accountId}`));
+      if (account.status === 'frozen') {
+        throw new ApiError(403, 'account_frozen', 'This account is frozen. Contact support.');
+      }
+      c.set('account', account);
+      await next();
+      return;
+    }
+
     if (!looksLikeApiKey(token)) throw new ApiError(401, 'unauthorized', 'Invalid API key');
 
     const [row] = await db
