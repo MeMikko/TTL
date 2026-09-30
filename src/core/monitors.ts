@@ -19,6 +19,8 @@ export interface MonitorsDeps {
   db: Db;
   policy: TargetPolicy;
   resolve?: Resolve;
+  /** Whether the server can send email alerts (RESEND_API_KEY set). Gates `alertEmail` at creation. */
+  emailConfigured?: boolean;
 }
 
 export interface MonitorInput {
@@ -26,7 +28,9 @@ export interface MonitorInput {
   ttlSeconds: number;
   graceSeconds: number;
   alertWebhookUrl: string | null;
+  alertWebhookUrl2: string | null;
   alertTelegram: boolean;
+  alertEmail: string | null;
 }
 
 export type MonitorEventName = 'monitor.down' | 'monitor.up' | 'monitor.unpaid';
@@ -54,6 +58,14 @@ export function alertPayload(event: MonitorEventName, m: Monitor, at: Date) {
 export type AlertPayload = ReturnType<typeof alertPayload>;
 
 /** Human-readable alert text (Telegram). Plain text; names are user-supplied. */
+/** One-line summary for an email subject. */
+export function alertSubject(p: AlertPayload): string {
+  const name = p.monitor.name;
+  if (p.event === 'monitor.down') return `monitor "${name}" is DOWN`;
+  if (p.event === 'monitor.unpaid') return `monitor "${name}" was PAUSED (unpaid)`;
+  return `monitor "${name}" is back UP`;
+}
+
 export function alertText(p: AlertPayload): string {
   const m = p.monitor;
   if (p.event === 'monitor.down') {
@@ -81,9 +93,11 @@ export async function enqueueAlerts(
   at: Date,
 ): Promise<number> {
   if (account.status !== 'active') return 0;
-  const channels: Array<'webhook' | 'telegram'> = [];
+  const channels: Array<'webhook' | 'webhook2' | 'telegram' | 'email'> = [];
   if (monitor.alertWebhookUrl) channels.push('webhook');
+  if (monitor.alertWebhookUrl2) channels.push('webhook2');
   if (monitor.alertTelegram && account.telegramChatId) channels.push('telegram');
+  if (monitor.alertEmail) channels.push('email');
   if (channels.length === 0) return 0;
   const payload = JSON.stringify(alertPayload(event, monitor, at));
   await tx.insert(schema.alertDeliveries).values(
@@ -115,6 +129,18 @@ async function recordEvent(
     .values({ monitorId, fromStatus: from, toStatus: to, reason, at });
 }
 
+/** Rejects `alertEmail` unless the server can actually send email; keeps the switch honest. */
+function requireEmailConfigured(deps: MonitorsDeps, email: string | null): string | null {
+  if (email && !deps.emailConfigured) {
+    throw new ApiError(
+      422,
+      'email_not_configured',
+      'Email alerts are not enabled on this server; use a webhook or Telegram',
+    );
+  }
+  return email;
+}
+
 export async function createMonitor(
   deps: MonitorsDeps,
   account: Account,
@@ -124,6 +150,10 @@ export async function createMonitor(
   const alertWebhookUrl = input.alertWebhookUrl
     ? await assertWebhookUrl(deps.policy, input.alertWebhookUrl, deps.resolve)
     : null;
+  const alertWebhookUrl2 = input.alertWebhookUrl2
+    ? await assertWebhookUrl(deps.policy, input.alertWebhookUrl2, deps.resolve)
+    : null;
+  const alertEmail = requireEmailConfigured(deps, input.alertEmail);
   const limit = TIERS[tierFor(account)].monitors;
   return deps.db.transaction(async (tx) => {
     // Serialise per account so two concurrent creates cannot both take the last free slot.
@@ -159,7 +189,9 @@ export async function createMonitor(
         graceSeconds: input.graceSeconds,
         status: 'new',
         alertWebhookUrl,
+        alertWebhookUrl2,
         alertTelegram: input.alertTelegram,
+        alertEmail,
         billing,
         paidUntil,
         createdAt: now,
@@ -254,6 +286,14 @@ export async function updateMonitor(
     set.alertWebhookUrl = patch.alertWebhookUrl
       ? await assertWebhookUrl(deps.policy, patch.alertWebhookUrl, deps.resolve)
       : null;
+  }
+  if (patch.alertWebhookUrl2 !== undefined) {
+    set.alertWebhookUrl2 = patch.alertWebhookUrl2
+      ? await assertWebhookUrl(deps.policy, patch.alertWebhookUrl2, deps.resolve)
+      : null;
+  }
+  if (patch.alertEmail !== undefined) {
+    set.alertEmail = requireEmailConfigured(deps, patch.alertEmail);
   }
   if (patch.ttlSeconds !== undefined || patch.graceSeconds !== undefined) {
     const timing = {

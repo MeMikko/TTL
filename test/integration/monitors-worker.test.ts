@@ -21,6 +21,7 @@ import { createHttpClient } from '../../src/worker/http-client.js';
 import { createWorker } from '../../src/worker/index.js';
 import { TEST_ENCRYPTION_KEY, silentLogger, testConfig, testDatabase } from '../helpers/app.js';
 import { newWallet, resetDb } from '../helpers/auth.js';
+import { fakeEmail } from '../helpers/fake-email.js';
 import { fakeTelegram } from '../helpers/fake-telegram.js';
 import { startTargetServer } from '../helpers/target-server.js';
 
@@ -42,10 +43,11 @@ const devPolicy: TargetPolicy = {
   allowPrivate: true,
   blockedCidrs: [],
 };
-const monitorsDeps: MonitorsDeps = { db, policy: devPolicy };
+const monitorsDeps: MonitorsDeps = { db, policy: devPolicy, emailConfigured: true };
 const client = createHttpClient(devPolicy);
 afterAll(() => client.close());
 const tg = fakeTelegram();
+const em = fakeEmail();
 
 let account: Account;
 beforeEach(async () => {
@@ -59,6 +61,8 @@ beforeEach(async () => {
   target.setHandler((_r, res) => res.end('ok'));
   tg.sent.length = 0;
   tg.respondWith(() => ({ ok: true, status: 200 }));
+  em.sent.length = 0;
+  em.respondWith(() => ({ ok: true, status: 200 }));
 });
 
 const T0 = new Date('2026-09-29T12:00:00Z');
@@ -69,7 +73,9 @@ const input = (over: Partial<MonitorInput> = {}): MonitorInput => ({
   ttlSeconds: 60,
   graceSeconds: 30,
   alertWebhookUrl: target.url('/alerts'),
+  alertWebhookUrl2: null,
   alertTelegram: true,
+  alertEmail: null,
   ...over,
 });
 
@@ -78,6 +84,7 @@ function alertDeps(now: Date, over: Partial<AlertDeps> = {}): AlertDeps {
     db,
     client,
     telegram: tg.client,
+    email: em.client,
     encryptionKey: key,
     hostLimiter: RateLimiter.perMinute(1000),
     logger: silentLogger,
@@ -258,6 +265,67 @@ describe('alert delivery', () => {
     const m2 = await deadMonitor({ alertWebhookUrl: null });
     expect(await deliverAlerts(at(90_000), { telegram: undefined })).toEqual(['fail']);
     expect((await alertsOf(m2.id))[0]!.lastError).toMatch(/not configured/);
+  });
+
+  it('delivers to an independent secondary webhook alongside the primary', async () => {
+    const hits: string[] = [];
+    target.setHandler((r, res) => {
+      hits.push(r.url ?? '');
+      res.end('ok');
+    });
+    const m = await createMonitor(
+      monitorsDeps,
+      account,
+      input({
+        alertWebhookUrl: target.url('/primary'),
+        alertWebhookUrl2: target.url('/backup'),
+        alertTelegram: false,
+      }),
+      T0,
+    );
+    await recordPing(db, m.id, T0);
+    await sweepExpiredMonitors(db, at(90_000));
+    const outcomes = await deliverAlerts(at(90_000));
+    expect(outcomes.sort()).toEqual(['success', 'success']);
+    expect(hits.sort()).toEqual(['/backup', '/primary']);
+    expect((await alertsOf(m.id)).map((a) => a.channel).sort()).toEqual(['webhook', 'webhook2']);
+  });
+
+  it('delivers an email alert, retries 5xx and fails on a 4xx', async () => {
+    const withEmail = (over: Partial<MonitorInput> = {}) =>
+      deadMonitor({
+        alertWebhookUrl: null,
+        alertTelegram: false,
+        alertEmail: 'oncall@example.com',
+        ...over,
+      });
+
+    const m = await withEmail();
+    expect(await deliverAlerts(at(90_000))).toEqual(['success']);
+    expect(em.sent).toHaveLength(1);
+    expect(em.sent[0]).toMatchObject({ to: 'oncall@example.com' });
+    expect(em.sent[0]!.subject).toContain('is DOWN');
+    expect((await alertsOf(m.id))[0]).toMatchObject({ status: 'succeeded', channel: 'email' });
+
+    em.respondWith(() => ({ ok: false, status: 503, error: 'upstream' }));
+    const m2 = await withEmail();
+    expect(await deliverAlerts(at(90_000))).toEqual(['retry']);
+    em.respondWith(() => ({ ok: false, status: 422, error: 'invalid recipient' }));
+    expect(await deliverAlerts(at(200_000))).toEqual(['fail']);
+    expect((await alertsOf(m2.id))[0]).toMatchObject({
+      status: 'failed',
+      lastError: 'invalid recipient',
+    });
+  });
+
+  it('fails email delivery cleanly when the server has no email client', async () => {
+    const m = await deadMonitor({
+      alertWebhookUrl: null,
+      alertTelegram: false,
+      alertEmail: 'oncall@example.com',
+    });
+    expect(await deliverAlerts(at(90_000), { email: undefined })).toEqual(['fail']);
+    expect((await alertsOf(m.id))[0]!.lastError).toMatch(/not configured/);
   });
 
   it('cancels pending alerts when the monitor is paused', async () => {

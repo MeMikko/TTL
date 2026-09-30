@@ -4,7 +4,8 @@ import { schema } from '../core/db/index.js';
 import type { AlertDelivery } from '../core/db/schema.js';
 import { SIGNATURE_HEADER, signPayload } from '../core/hmac.js';
 import type { Logger } from '../core/logger.js';
-import { alertText, type AlertPayload } from '../core/monitors.js';
+import { alertSubject, alertText, type AlertPayload } from '../core/monitors.js';
+import type { EmailClient } from '../core/email.js';
 import type { RateLimiter } from '../core/rate-limit.js';
 import type { TelegramClient } from '../core/telegram.js';
 import { getOrCreateWebhookSecret } from '../core/webhook-secret.js';
@@ -17,6 +18,7 @@ export interface AlertDeps {
   db: Db;
   client: HttpClient;
   telegram?: TelegramClient;
+  email?: EmailClient;
   encryptionKey: Buffer;
   hostLimiter: RateLimiter;
   logger: Logger;
@@ -91,15 +93,16 @@ export async function processAlert(
   }
 
   const payload = JSON.parse(alert.payload) as AlertPayload;
-  let result: AttemptResult;
 
-  if (alert.channel === 'webhook') {
+  // Each channel returns an AttemptResult, or a terminal short-circuit ('cancelled' | 'deferred'
+  // | 'fail') when the delivery cannot even be attempted (config/URL missing, rate-limited).
+  const webhook = async (url: string | null): Promise<AttemptResult | 'cancelled' | 'deferred'> => {
     // Use the URL configured now; it may have been changed or removed since the alert was queued.
-    if (!monitor.alertWebhookUrl) {
+    if (!url) {
       await done('cancelled', { error: 'webhook removed' });
       return 'cancelled';
     }
-    const host = new URL(monitor.alertWebhookUrl).host;
+    const host = new URL(url).host;
     const limit = deps.hostLimiter.consume(`host:${host}`);
     if (!limit.allowed) {
       await db
@@ -116,7 +119,7 @@ export async function processAlert(
     const secret = await getOrCreateWebhookSecret(db, deps.encryptionKey, account.id);
     const body = alert.payload;
     const res = await deps.client.send({
-      url: monitor.alertWebhookUrl,
+      url,
       method: 'POST',
       userHeaders: {},
       systemHeaders: {
@@ -129,7 +132,7 @@ export async function processAlert(
       body,
       timeoutMs: ALERT_TIMEOUT_MS,
     });
-    result = {
+    return {
       outcome: classifyResult(res),
       httpStatus: res.status,
       error: res.failure
@@ -139,7 +142,9 @@ export async function processAlert(
           : undefined,
       retryAfterSeconds: res.retryAfterSeconds,
     };
-  } else {
+  };
+
+  const telegram = async (): Promise<AttemptResult | 'cancelled' | 'fail'> => {
     if (!account.telegramChatId) {
       await done('cancelled', { error: 'no Telegram chat linked' });
       return 'cancelled';
@@ -150,7 +155,7 @@ export async function processAlert(
     }
     const res = await deps.telegram.sendMessage(account.telegramChatId, alertText(payload));
     const status = res.status ?? 0;
-    result = {
+    return {
       outcome: res.ok
         ? 'success'
         : !res.status || status === 429 || status >= 500
@@ -160,7 +165,44 @@ export async function processAlert(
       error: res.error,
       retryAfterSeconds: res.retryAfterSeconds,
     };
-  }
+  };
+
+  const email = async (): Promise<AttemptResult | 'cancelled' | 'fail'> => {
+    if (!monitor.alertEmail) {
+      await done('cancelled', { error: 'email removed' });
+      return 'cancelled';
+    }
+    if (!deps.email) {
+      await done('failed', { error: 'email is not configured on this server' });
+      return 'fail';
+    }
+    const subject = `time2live: ${alertSubject(payload)}`;
+    const res = await deps.email.send(monitor.alertEmail, subject, alertText(payload));
+    const status = res.status ?? 0;
+    return {
+      outcome: res.ok
+        ? 'success'
+        : !res.status || status === 429 || status >= 500
+          ? 'retry'
+          : 'fail',
+      httpStatus: res.status,
+      error: res.error,
+      retryAfterSeconds: res.retryAfterSeconds,
+    };
+  };
+
+  const attempted =
+    alert.channel === 'webhook'
+      ? await webhook(monitor.alertWebhookUrl)
+      : alert.channel === 'webhook2'
+        ? await webhook(monitor.alertWebhookUrl2)
+        : alert.channel === 'email'
+          ? await email()
+          : await telegram();
+  if (attempted === 'cancelled') return 'cancelled';
+  if (attempted === 'deferred') return 'deferred';
+  if (attempted === 'fail') return 'fail';
+  const result = attempted;
 
   if (result.outcome === 'success') {
     await done('succeeded', result);
