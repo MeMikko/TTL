@@ -253,6 +253,12 @@ configuration. The revoke button cuts every API key at once (agents are locked o
 session survives it, so you don't lock yourself out. Nothing here is required for the service to
 run — it is a supervisory convenience.
 
+**Analytics:** `https://<domain>/analytics` shows live, fleet-wide statistics (accounts, monitors,
+jobs, runs in the last 24 h, revenue, on-chain switches), refreshed every few seconds. It uses the
+same wallet sign-in but is gated to a single operator wallet: set `ANALYTICS_ADDRESS` to that wallet
+(compared lowercased). Any other wallet gets `403`, and an empty `ANALYTICS_ADDRESS` disables the
+page and its `/v1/analytics` endpoint entirely (`404`).
+
 ## 8. Telegram bot (optional)
 
 Create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` and
