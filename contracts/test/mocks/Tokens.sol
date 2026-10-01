@@ -69,6 +69,21 @@ contract BrokenToken is MockToken {
     }
 }
 
+/// @notice A token that reverts transfers to a specific blocklisted address (like USDC/USDT), but
+/// works for everyone else — the realistic case the payout-redirect escape hatch exists for.
+contract BlocklistToken is MockToken {
+    address public blocked;
+
+    function setBlocked(address a) external {
+        blocked = a;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        require(to != blocked, "blocked");
+        super._update(from, to, value);
+    }
+}
+
 /// @notice A hostile token whose transfers burn every bit of gas they are given (a keeper griefer).
 contract GasBombToken is MockToken {
     function _update(address from, address to, uint256 value) internal override {

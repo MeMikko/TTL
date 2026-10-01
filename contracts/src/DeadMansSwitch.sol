@@ -43,6 +43,10 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     address public owner;
     address public agent;
     address public beneficiary;
+    /// @notice Optional alternate payout address, settable only by the beneficiary. When non-zero,
+    /// `trigger()` and `sweep()` pay here instead of `beneficiary` — the escape hatch for a
+    /// beneficiary that cannot receive a token (e.g. USDC-blocklisted) or ETH.
+    address public payoutAddress;
     uint64 public ttl;
     uint64 public lastPing;
     bool public triggered;
@@ -62,6 +66,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     event Withdrawn(address indexed token, uint256 amount);
     event AgentChanged(address indexed agent);
     event BeneficiaryChanged(address indexed beneficiary);
+    event PayoutAddressChanged(address indexed payoutAddress);
     event TtlChanged(uint64 ttl);
     event TokenAdded(address indexed token);
     event TokenRemoved(address indexed token);
@@ -235,7 +240,23 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     function setBeneficiary(address beneficiary_) external onlyOwner whileLive {
         if (beneficiary_ == address(0)) revert ZeroAddress();
         beneficiary = beneficiary_;
+        // Clear any redirect the previous beneficiary set, so it cannot capture the new one's funds.
+        if (payoutAddress != address(0)) {
+            payoutAddress = address(0);
+            emit PayoutAddressChanged(address(0));
+        }
         emit BeneficiaryChanged(beneficiary_);
+    }
+
+    /// @notice The beneficiary may redirect their payout to another address. This is the escape
+    /// hatch for a beneficiary that cannot receive a token (e.g. a USDC/USDT blocklisted address) or
+    /// ETH: set a reachable address, then `sweep()` (or the next `trigger()`) delivers there.
+    /// Only the beneficiary; allowed before or after triggering. Owner can never redirect.
+    function setPayoutAddress(address to) external {
+        if (msg.sender != beneficiary) revert NotBeneficiary();
+        if (to == address(0)) revert ZeroAddress();
+        payoutAddress = to;
+        emit PayoutAddressChanged(to);
     }
 
     /// @notice Changes the TTL. Also counts as a ping, so a shorter TTL can never expire the
@@ -318,7 +339,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         if (triggered) revert AlreadyTriggered();
         if (block.timestamp <= deadline()) revert NotExpired();
         triggered = true;
-        address to = beneficiary;
+        address to = _payoutTo();
         emit Triggered(msg.sender, to);
 
         uint256 n = _tokens.length;
@@ -348,7 +369,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     /// (`address(0)` = ETH) to the beneficiary.
     function sweep(address token) external nonReentrant {
         if (!triggered) revert NotTriggered();
-        address to = beneficiary;
+        address to = _payoutTo();
         uint256 amount;
         if (token == address(0)) {
             amount = address(this).balance;
@@ -363,6 +384,12 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     }
 
     // ---- internals ----------------------------------------------------------------------------
+
+    /// @dev Where `trigger()` and `sweep()` send funds: the beneficiary's redirect if set, else the
+    /// beneficiary itself.
+    function _payoutTo() private view returns (address) {
+        return payoutAddress == address(0) ? beneficiary : payoutAddress;
+    }
 
     function _onlyOwner() private view {
         if (msg.sender != owner) revert NotOwner();
