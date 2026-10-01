@@ -11,20 +11,20 @@ seconds; if pings stop, **anyone** may call `trigger()` after the deadline and e
 fixed `beneficiary`. There is no admin, no upgradeability, and no privileged keeper — triggering is
 permissionless. A convenience keeper (off-chain) only calls the same public `trigger()`.
 
-| Contract | Role |
-| --- | --- |
+| Contract                | Role                                                                                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DeadMansSwitchFactory` | Deploys one isolated EIP-1167 clone per switch (caller = owner); keepers discover switches via `SwitchCreated`. Deterministic address per `(owner, salt)`. |
-| `DeadMansSwitch` | The switch itself; implementation behind the clones (locked in its constructor). |
+| `DeadMansSwitch`        | The switch itself; implementation behind the clones (locked in its constructor).                                                                           |
 
 ## 2. Scope
 
-| | |
-| --- | --- |
-| **Commit** | `f5f5682edaee6e8178b859fb459addc2664bdcad` (branch `main`) |
-| **In scope** | `contracts/src/DeadMansSwitch.sol` (440 LOC), `contracts/src/DeadMansSwitchFactory.sol` (93 LOC) |
-| **Script** | `contracts/script/Deploy.s.sol` (deployment only, review for correctness, not security-critical) |
+|                  |                                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------------- |
+| **Commit**       | `f5f5682edaee6e8178b859fb459addc2664bdcad` (branch `main`)                                            |
+| **In scope**     | `contracts/src/DeadMansSwitch.sol` (440 LOC), `contracts/src/DeadMansSwitchFactory.sol` (93 LOC)      |
+| **Script**       | `contracts/script/Deploy.s.sol` (deployment only, review for correctness, not security-critical)      |
 | **Out of scope** | Off-chain keeper (`src/worker/keeper.ts`), the API/MCP service, test mocks, OpenZeppelin library code |
-| **SLOC** | ~533 source lines, 2 files, no external calls except token transfers and ETH sends |
+| **SLOC**         | ~533 source lines, 2 files, no external calls except token transfers and ETH sends                    |
 
 ## 3. Build & test
 
@@ -62,14 +62,14 @@ Current status: **51 tests pass** (unit, fuzz, 4 invariants). Compiler settings 
 
 ## 5. Roles & trust model
 
-| Action | Who | When |
-| --- | --- | --- |
-| `ping` | agent or owner | while live |
-| `withdraw`, `setAgent`, `setBeneficiary`, `setTtl`, `addToken`, `removeToken`, `proposeCancel`, `revokeCancel` | owner | while live |
-| `approveCancel`, `setPayoutAddress` | beneficiary | approveCancel: while live; setPayoutAddress: any time |
-| `deposit`, send ETH | anyone | before trigger (ETH any time) |
-| `trigger` | **anyone** | after deadline |
-| `sweep` | **anyone** | after termination |
+| Action                                                                                                         | Who            | When                                                  |
+| -------------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------- |
+| `ping`                                                                                                         | agent or owner | while live                                            |
+| `withdraw`, `setAgent`, `setBeneficiary`, `setTtl`, `addToken`, `removeToken`, `proposeCancel`, `revokeCancel` | owner          | while live                                            |
+| `approveCancel`, `setPayoutAddress`                                                                            | beneficiary    | approveCancel: while live; setPayoutAddress: any time |
+| `deposit`, send ETH                                                                                            | anyone         | before trigger (ETH any time)                         |
+| `trigger`                                                                                                      | **anyone**     | after deadline                                        |
+| `sweep`                                                                                                        | **anyone**     | after termination                                     |
 
 **Funds can only ever leave to:** the owner (`withdraw` / `approveCancel`), the beneficiary or its
 beneficiary-set redirect (`trigger` / `sweep`), or the trigger caller (an opt-in reward, ≤ 5% of the
@@ -89,12 +89,12 @@ Random sequences of every action by owner, agent, a stranger and the beneficiary
 
 A thorough internal review (not a substitute for this engagement) found and resolved:
 
-| ID | Severity | Finding | Resolution |
-| --- | --- | --- | --- |
-| H | High | A permanently-rejecting beneficiary (ETH-rejecting contract, or token-blocklisted address) with an immutable beneficiary → funds stuck forever | **Fixed:** `setPayoutAddress` lets only the beneficiary redirect its payout; `trigger`/`sweep` pay the redirect. Owner cannot redirect. |
-| M1 | Medium | After `approveCancel` (funds → owner), `sweep` still sent to the beneficiary, so ETH that failed to reach an ETH-rejecting owner could be swept to the beneficiary | **Fixed:** `cancelled` flag routes `sweep` to the owner after a cancel, to the beneficiary after a trigger |
-| L1 | Low | A gas-burning token can stall `trigger()` | **Documented** (owner-selected tokens; no per-token gas cap, which would break legitimate heavy tokens; keeper bounds total gas) |
-| L5 | Info | `Triggered` logged the effective recipient, not the literal beneficiary | **Fixed:** logs the beneficiary |
+| ID  | Severity | Finding                                                                                                                                                            | Resolution                                                                                                                              |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| H   | High     | A permanently-rejecting beneficiary (ETH-rejecting contract, or token-blocklisted address) with an immutable beneficiary → funds stuck forever                     | **Fixed:** `setPayoutAddress` lets only the beneficiary redirect its payout; `trigger`/`sweep` pay the redirect. Owner cannot redirect. |
+| M1  | Medium   | After `approveCancel` (funds → owner), `sweep` still sent to the beneficiary, so ETH that failed to reach an ETH-rejecting owner could be swept to the beneficiary | **Fixed:** `cancelled` flag routes `sweep` to the owner after a cancel, to the beneficiary after a trigger                              |
+| L1  | Low      | A gas-burning token can stall `trigger()`                                                                                                                          | **Documented** (owner-selected tokens; no per-token gas cap, which would break legitimate heavy tokens; keeper bounds total gas)        |
+| L5  | Info     | `Triggered` logged the effective recipient, not the literal beneficiary                                                                                            | **Fixed:** logs the beneficiary                                                                                                         |
 
 **Left as deliberate design choices (please confirm or challenge):**
 
