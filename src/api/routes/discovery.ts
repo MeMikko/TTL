@@ -236,10 +236,10 @@ function landingHtml(
   }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  code { color: var(--amber); }
-  .wrap { max-width: 820px; margin: 0 auto; padding: 0 16px; }
-  header { padding: 72px 0 48px; border-bottom: 1px solid var(--line); }
-  .brand { display: flex; align-items: center; gap: 12px; font-size: 30px; font-weight: 600; letter-spacing: -0.5px; }
+  code { color: var(--amber); overflow-wrap: anywhere; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 24px); }
+  header { padding: clamp(40px, 9vw, 72px) 0 clamp(30px, 6vw, 48px); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: clamp(23px, 6.5vw, 30px); font-weight: 600; letter-spacing: -0.5px; }
   .pulse {
     width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
     box-shadow: 0 0 0 0 rgba(53,208,127,.6); animation: pulse 2.4s infinite;
@@ -250,12 +250,12 @@ function landingHtml(
     100% { box-shadow: 0 0 0 0 rgba(53,208,127,0); }
   }
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
-  .tag { margin: 20px 0 0; font-size: 17px; color: var(--fg); max-width: 60ch; }
+  .tag { margin: 20px 0 0; font-size: clamp(15px, 3.4vw, 17px); color: var(--fg); max-width: 60ch; }
   .sub { margin: 10px 0 0; color: var(--dim); }
-  .badge { display: inline-block; margin-left: 12px; padding: 2px 10px; border-radius: 20px; font-size: 12px; border: 1px solid var(--line); vertical-align: middle; }
+  .badge { display: inline-block; margin-left: 0; padding: 2px 10px; border-radius: 20px; font-size: 12px; border: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
   .badge.live { color: var(--accent); border-color: var(--accent); }
   .badge.test { color: var(--amber); border-color: var(--amber); }
-  .topbar { display: flex; align-items: center; gap: 12px; }
+  .topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; }
   .eye { margin-left: auto; color: var(--dim); border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; font-size: 13px; white-space: nowrap; }
   .eye:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
@@ -265,7 +265,7 @@ function landingHtml(
   }
   .btn:hover { border-color: var(--accent); text-decoration: none; }
   .btn.primary { border-color: var(--accent); color: var(--accent); }
-  section { padding: 48px 0; border-bottom: 1px solid var(--line); }
+  section { padding: clamp(32px, 7vw, 48px) 0; border-bottom: 1px solid var(--line); }
   h2 { font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); margin: 0 0 22px; }
   h3 { font-size: 16px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); display: inline-block; }
@@ -274,12 +274,15 @@ function landingHtml(
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
   .card p { margin: 0 0 8px; color: var(--fg); }
   .small { font-size: 12.5px; }
+  .mono { overflow-wrap: anywhere; }
   .dim { color: var(--dim); }
   pre {
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px 18px; overflow-x: auto; font-size: 13px; line-height: 1.7; margin: 0 0 14px;
+    padding: clamp(13px, 3vw, 16px) clamp(14px, 3.5vw, 18px); overflow-x: auto;
+    font-size: clamp(12px, 2.7vw, 13px); line-height: 1.7; margin: 0 0 14px;
   }
   pre .c { color: var(--dim); }
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   td, th { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); }
   th { color: var(--dim); font-weight: 500; }
@@ -345,6 +348,7 @@ curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping be
 
   <section>
     <h2>Pricing · ${x402Line}</h2>
+    <div class="tablewrap">
     <table>
       <tr><th>Tier / action</th><th>What you get</th><th>Price</th></tr>
       <tr><td>Free (unactivated)</td><td>${unactivated.monitors} monitor · ${unactivated.runsPerMonth} runs/month</td><td class="price">$0</td></tr>
@@ -353,6 +357,7 @@ curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping be
       <tr><td>Extra monitor</td><td>per 30 days, from credits</td><td class="price">${monitor}</td></tr>
       <tr><td>Credit packs</td><td>prepaid, USDC on Base</td><td class="price">${packs}</td></tr>
     </table>
+    </div>
     <p class="small dim">Over-quota calls answer <code>402</code> with an x402 <code>PAYMENT-REQUIRED</code>
     challenge; pay and retry the same request. One round trip, no human.</p>
   </section>
