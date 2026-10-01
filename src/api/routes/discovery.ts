@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { networkInfo, type NetworkInfo } from '../../core/network.js';
 import { PRICES, TIERS, usd } from '../../core/plans.js';
+import { createReceiptSigner } from '../../core/receipts.js';
 import { VERSION } from '../../core/version.js';
 import type { AppDeps, AppEnv } from '../context.js';
 import { MCP_INSTRUCTIONS } from '../mcp.js';
@@ -40,6 +41,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
       }
     : null;
   const net = networkInfo(deps.config);
+  const receiptSigner = createReceiptSigner(deps.config.ENCRYPTION_KEY);
   const app = new Hono<AppEnv>();
   const cache = 'public, max-age=300';
   // Shorter cache for the human/agent entry points, so a testnet→mainnet flip is visible quickly.
@@ -65,6 +67,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
       status: `${base}/status`,
       security: `${base}/.well-known/security.txt`,
       x402: `${base}/.well-known/x402`,
+      receiptKey: `${base}/.well-known/time2live-receipts.json`,
     },
     x402,
     deadMansSwitchContract: onChain,
@@ -148,6 +151,20 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
         '',
       ].join('\n'),
     );
+  });
+
+  app.get('/.well-known/time2live-receipts.json', (c) => {
+    c.header('cache-control', cache);
+    c.header('access-control-allow-origin', '*');
+    return c.json({
+      alg: 'Ed25519',
+      keyId: receiptSigner.keyId,
+      publicKey: receiptSigner.publicKeyB64, // base64, raw 32-byte Ed25519 public key
+      canonicalization: 'JSON with object keys sorted recursively and no insignificant whitespace',
+      verify:
+        'ed25519_verify(publicKey, utf8(canonical(receipt)), base64_decode(signature.value)); receipt is signed at GET /v1/monitors/{id}/receipt',
+      docs: `${base}/llms.txt`,
+    });
   });
 
   app.get('/.well-known/x402', (c) => {
@@ -274,6 +291,11 @@ Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`.
 - Get the secret with \`GET /v1/account/webhook-secret\`; rotate it with \`POST /v1/account/webhook-secret/rotate\` (effective immediately — the old secret stops validating).
 - Delivery is **at-least-once**: retried with exponential backoff on failure, so make your handler idempotent (each run has a stable id). Targets must be public HTTPS; redirects are not followed and private/loopback/metadata addresses are blocked, also after DNS resolution.
 - Lost or leaked an API key? \`POST /v1/account/keys/revoke-all\` cuts every key at once (the wallet operator session keeps working).
+
+## Liveness receipts
+
+- \`GET /v1/monitors/{id}/receipt\` returns a **server-signed (Ed25519) liveness receipt**: a portable attestation an agent can hand to a third party to *prove* its state rather than pointing at a dashboard. It records the schedule id, last heartbeat + success hash, the missed-window rule, the stop/alert action, and — crucially — distinguishes \`halted_by_operator\` (paused on purpose) from \`missed_window\` (went silent).
+- Verify offline: Ed25519 over the canonical JSON of \`receipt\` (object keys sorted recursively, no whitespace), against the public key at [\`/.well-known/time2live-receipts.json\`](${base}/.well-known/time2live-receipts.json).
 
 ## MCP
 
