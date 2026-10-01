@@ -5,6 +5,7 @@ import type { Database } from '../core/db/index.js';
 import type { Logger } from '../core/logger.js';
 import { RateLimiter } from '../core/rate-limit.js';
 import { renewPaidMonitors, sweepExpiredMonitors } from '../core/monitors.js';
+import { probeActiveMonitors } from './monitor-probe.js';
 import { createEmailClient, type EmailClient } from '../core/email.js';
 import { createTelegramClient, type TelegramClient } from '../core/telegram.js';
 import { claimAlerts, processAlert, type AlertDeps } from './alerts.js';
@@ -154,6 +155,12 @@ export function createWorker(deps: WorkerDeps): Worker {
       const r = await renewPaidMonitors(db, new Date());
       if (r.renewed || r.paused) logger.info(r, 'paid monitors renewed');
       if (r.renewed + r.paused < 100) break;
+    }
+    // Active checks first: a successful probe refreshes the monitor's expiry before the sweep runs.
+    for (let i = 0; i < 10; i++) {
+      const r = await probeActiveMonitors(db, client, new Date());
+      if (r.probed) logger.info(r, 'active monitors probed');
+      if (r.probed < 50) break;
     }
     for (let i = 0; i < 10; i++) {
       const r = await sweepExpiredMonitors(db, new Date());

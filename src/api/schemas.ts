@@ -291,6 +291,24 @@ export const AlertsSchema = z
   })
   .openapi('Alerts');
 
+export const CheckSchema = z
+  .object({
+    url: z.string().max(2048).openapi({
+      description: "The agent's own URL we GET from the outside; a 2xx response counts as a ping.",
+      example: 'https://agent.example.com/health',
+    }),
+    intervalSeconds: z
+      .number()
+      .int()
+      .min(30)
+      .max(24 * 3600)
+      .openapi({
+        description: 'How often we probe; must be shorter than ttlSeconds.',
+        example: 60,
+      }),
+  })
+  .openapi('Check');
+
 export const CreateMonitorSchema = z
   .object({
     name: z.string().trim().min(1).max(100),
@@ -300,7 +318,7 @@ export const CreateMonitorSchema = z
       .min(60)
       .max(30 * 24 * 3600)
       .openapi({
-        description: 'Expected maximum time between pings.',
+        description: 'Expected maximum time between pings (or successful probes, in active mode).',
         example: 300,
       }),
     graceSeconds: z
@@ -309,6 +327,17 @@ export const CreateMonitorSchema = z
       .min(0)
       .max(7 * 24 * 3600)
       .default(60),
+    mode: z
+      .enum(['heartbeat', 'active'])
+      .default('heartbeat')
+      .openapi({
+        description:
+          'heartbeat: the agent pushes pings (default). active: we probe `check.url` from the ' +
+          'outside, so the check travels the same path a real request does.',
+      }),
+    check: CheckSchema.nullable()
+      .default(null)
+      .openapi({ description: 'Required when mode is "active"; omit for heartbeat.' }),
     alerts: AlertsSchema.default({
       webhookUrl: null,
       webhookUrl2: null,
@@ -352,6 +381,19 @@ export const MonitorSchema = z
     }),
     ttlSeconds: z.number().int(),
     graceSeconds: z.number().int(),
+    mode: z.enum(['heartbeat', 'active']),
+    check: z
+      .object({ url: z.string(), intervalSeconds: z.number().int() })
+      .nullable()
+      .openapi({ description: 'The active-check configuration, or null for a heartbeat monitor.' }),
+    lastProbe: z
+      .object({
+        at: z.iso.datetime().nullable(),
+        ok: z.boolean().nullable(),
+        detail: z.string().nullable(),
+      })
+      .nullable()
+      .openapi({ description: 'Most recent active-check probe (active mode only).' }),
     pingUrl: z.string().openapi({ description: 'POST here to report liveness (no auth needed).' }),
     lastPingAt: z.iso.datetime().nullable(),
     expiresAt: z.iso.datetime().nullable(),
