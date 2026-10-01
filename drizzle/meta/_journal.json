@@ -57,6 +57,13 @@
       "when": 1790768823386,
       "tag": "0007_keeper_skip",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790872832419,
+      "tag": "0008_active_monitors",
+      "breakpoints": true
     }
   ]
 }

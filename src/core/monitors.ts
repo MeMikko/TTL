@@ -31,6 +31,12 @@ export interface MonitorInput {
   alertWebhookUrl2: string | null;
   alertTelegram: boolean;
   alertEmail: string | null;
+  /** 'heartbeat' (agent pushes pings, default) or 'active' (we probe `checkUrl`). */
+  mode?: 'heartbeat' | 'active';
+  /** Active mode: the agent URL we probe from the outside (public HTTPS). */
+  checkUrl?: string | null;
+  /** Active mode: probe interval in seconds; must be ≥ 30 and < ttlSeconds. */
+  checkIntervalSeconds?: number | null;
 }
 
 export type MonitorEventName = 'monitor.down' | 'monitor.up' | 'monitor.unpaid';
@@ -154,6 +160,8 @@ export async function createMonitor(
     ? await assertWebhookUrl(deps.policy, input.alertWebhookUrl2, deps.resolve)
     : null;
   const alertEmail = requireEmailConfigured(deps, input.alertEmail);
+  const mode = input.mode ?? 'heartbeat';
+  const { checkUrl, checkIntervalSeconds } = await validateActiveCheck(deps, mode, input);
   const limit = TIERS[tierFor(account)].monitors;
   return deps.db.transaction(async (tx) => {
     // Serialise per account so two concurrent creates cannot both take the last free slot.
@@ -188,6 +196,9 @@ export async function createMonitor(
         ttlSeconds: input.ttlSeconds,
         graceSeconds: input.graceSeconds,
         status: 'new',
+        mode,
+        checkUrl,
+        checkIntervalSeconds,
         alertWebhookUrl,
         alertWebhookUrl2,
         alertTelegram: input.alertTelegram,
@@ -200,6 +211,43 @@ export async function createMonitor(
       .returning();
     return row!;
   });
+}
+
+/**
+ * Validates active-check inputs. For `active` the agent URL is required and SSRF-checked (public
+ * HTTPS, like a webhook target), and the probe interval must be ≥ 30 s and shorter than the TTL so a
+ * single failed probe cannot by itself expire the monitor. For `heartbeat` both must be absent.
+ */
+async function validateActiveCheck(
+  deps: MonitorsDeps,
+  mode: 'heartbeat' | 'active',
+  input: Pick<MonitorInput, 'checkUrl' | 'checkIntervalSeconds' | 'ttlSeconds'>,
+): Promise<{ checkUrl: string | null; checkIntervalSeconds: number | null }> {
+  if (mode === 'heartbeat') {
+    if (input.checkUrl || input.checkIntervalSeconds != null) {
+      throw new ApiError(
+        400,
+        'invalid_request',
+        'checkUrl/checkIntervalSeconds require mode "active"',
+      );
+    }
+    return { checkUrl: null, checkIntervalSeconds: null };
+  }
+  if (!input.checkUrl)
+    throw new ApiError(400, 'invalid_request', 'mode "active" requires checkUrl');
+  const interval = input.checkIntervalSeconds;
+  if (interval == null || interval < 30) {
+    throw new ApiError(400, 'invalid_request', 'checkIntervalSeconds must be at least 30');
+  }
+  if (interval >= input.ttlSeconds) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'checkIntervalSeconds must be shorter than ttlSeconds',
+    );
+  }
+  const checkUrl = await assertWebhookUrl(deps.policy, input.checkUrl, deps.resolve);
+  return { checkUrl, checkIntervalSeconds: interval };
 }
 
 /**
@@ -300,6 +348,18 @@ export async function updateMonitor(
       ttlSeconds: patch.ttlSeconds ?? m.ttlSeconds,
       graceSeconds: patch.graceSeconds ?? m.graceSeconds,
     };
+    // Keep the active-check invariant: a single failed probe must not by itself expire the monitor.
+    if (
+      m.mode === 'active' &&
+      m.checkIntervalSeconds != null &&
+      timing.ttlSeconds <= m.checkIntervalSeconds
+    ) {
+      throw new ApiError(
+        400,
+        'invalid_request',
+        'ttlSeconds must stay greater than the check interval',
+      );
+    }
     Object.assign(set, timing);
     if (m.status === 'alive' && m.lastPingAt) set.expiresAt = expiry(timing, m.lastPingAt);
   }

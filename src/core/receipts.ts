@@ -85,6 +85,12 @@ export interface MonitorReceiptInput {
     alertWebhookUrl2: string | null;
     alertTelegram: boolean;
     alertEmail: string | null;
+    mode: string;
+    checkUrl: string | null;
+    checkIntervalSeconds: number | null;
+    lastProbeAt: Date | null;
+    lastProbeOk: boolean | null;
+    lastProbeDetail: string | null;
   };
   lastEvent: { toStatus: string; reason: string; at: Date } | null;
   ownerAddress: string;
@@ -127,6 +133,19 @@ export function buildMonitorReceipt(input: MonitorReceiptInput) {
     name: m.name,
     operator: input.ownerAddress,
     liveness,
+    // How liveness is observed. For 'active' the signal travels the real path: we probe the agent's
+    // own URL from the outside, so a receipt cannot say alive while the front door is closed.
+    mode: m.mode,
+    check:
+      m.mode === 'active' && m.checkUrl
+        ? {
+            url: m.checkUrl,
+            intervalSeconds: m.checkIntervalSeconds,
+            lastProbeAt: m.lastProbeAt ? m.lastProbeAt.toISOString() : null,
+            lastProbeOk: m.lastProbeOk,
+            lastProbeDetail: m.lastProbeDetail,
+          }
+        : null,
     heartbeat: {
       lastPingAt,
       lastSuccessHash,

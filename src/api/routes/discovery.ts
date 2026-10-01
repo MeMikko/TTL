@@ -318,6 +318,7 @@ ${contract}
 ## Optional
 
 - Monitor states: new → alive → dead (after ttlSeconds + graceSeconds without a ping) → alive; paused. Alerts: monitor.down, monitor.up, monitor.unpaid.
+- Monitor modes: \`heartbeat\` (default — your agent pushes pings) or \`active\` — we probe your own URL from the outside every \`check.intervalSeconds\`, and a 2xx counts as the ping. Active checks travel the same path a real request does, so a process can't report healthy from inside while its front door is closed. Create with \`{"mode":"active","check":{"url":"https://you/health","intervalSeconds":60},"ttlSeconds":300}\`.
 - Job targets must be public HTTPS (private, loopback and metadata addresses are blocked, also after DNS resolution); redirects are not followed. Retries with exponential backoff; history kept 30 days.
 `;
 }

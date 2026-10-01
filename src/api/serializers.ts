@@ -89,6 +89,15 @@ export function serializeMonitor(m: Monitor, publicBaseUrl: string) {
     status: m.status,
     ttlSeconds: m.ttlSeconds,
     graceSeconds: m.graceSeconds,
+    mode: m.mode,
+    check:
+      m.mode === 'active' && m.checkUrl
+        ? { url: m.checkUrl, intervalSeconds: m.checkIntervalSeconds ?? 0 }
+        : null,
+    lastProbe:
+      m.mode === 'active'
+        ? { at: iso(m.lastProbeAt), ok: m.lastProbeOk, detail: m.lastProbeDetail }
+        : null,
     pingUrl: `${publicBaseUrl.replace(/\/$/, '')}/v1/heartbeat/${m.id}`,
     lastPingAt: iso(m.lastPingAt),
     expiresAt: iso(m.expiresAt),

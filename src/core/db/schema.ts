@@ -244,6 +244,13 @@ export const usageCounters = pgTable(
 
 export const MONITOR_STATUSES = ['new', 'alive', 'dead', 'paused'] as const;
 export type MonitorStatus = (typeof MONITOR_STATUSES)[number];
+/**
+ * How liveness is observed. `heartbeat`: the agent pushes pings (self-report). `active`: time2live
+ * probes the agent's own URL from the outside on a schedule — a successful 2xx acts as the ping, so
+ * the check travels the same path a real request does (not just an inside "healthy").
+ */
+export const MONITOR_MODES = ['heartbeat', 'active'] as const;
+export type MonitorMode = (typeof MONITOR_MODES)[number];
 
 export const monitors = pgTable(
   'monitors',
@@ -257,6 +264,16 @@ export const monitors = pgTable(
     ttlSeconds: integer('ttl_seconds').notNull(),
     graceSeconds: integer('grace_seconds').notNull(),
     status: text('status', { enum: MONITOR_STATUSES }).notNull().default('new'),
+    /** heartbeat = agent pushes pings; active = we probe `checkUrl` every `checkIntervalSeconds`. */
+    mode: text('mode', { enum: MONITOR_MODES }).notNull().default('heartbeat'),
+    /** Active mode: the agent's own URL we GET from the outside; a 2xx counts as a ping. */
+    checkUrl: text('check_url'),
+    /** Active mode: how often we probe (seconds); must be < ttlSeconds. */
+    checkIntervalSeconds: integer('check_interval_seconds'),
+    /** Active mode: when we last probed, and the outcome (for the UI and the liveness receipt). */
+    lastProbeAt: ts('last_probe_at'),
+    lastProbeOk: boolean('last_probe_ok'),
+    lastProbeDetail: text('last_probe_detail'),
     lastPingAt: ts('last_ping_at'),
     /** last ping + ttl + grace while alive; null otherwise. */
     expiresAt: ts('expires_at'),
@@ -282,6 +299,9 @@ export const monitors = pgTable(
     index('monitors_expiry_idx')
       .on(t.expiresAt)
       .where(sql`${t.status} = 'alive'`),
+    index('monitors_probe_idx')
+      .on(t.lastProbeAt)
+      .where(sql`${t.mode} = 'active'`),
     index('monitors_account_idx').on(t.accountId, t.createdAt),
     check('monitors_status_check', sql`${t.status} in ('new', 'alive', 'dead', 'paused')`),
   ],
