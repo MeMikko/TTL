@@ -370,6 +370,7 @@ export function monitorRoutes(deps: AppDeps) {
       ownerAddress: c.get('account').walletAddress,
       network: receiptNetwork,
       service: 'time2live',
+      base,
       now: now(),
     });
     c.header('cache-control', 'no-store');

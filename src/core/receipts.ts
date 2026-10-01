@@ -98,6 +98,8 @@ export interface MonitorReceiptInput {
   ownerAddress: string;
   network: string;
   service: string;
+  /** Public base URL, used to build the receipt's self-describing replay URL. */
+  base: string;
   now: Date;
 }
 
@@ -173,11 +175,15 @@ export function buildMonitorReceipt(input: MonitorReceiptInput) {
       // Where a missed window fires; empty means the miss is recorded but no channel is configured.
       onMiss: channels,
       alerts: ['monitor.down', 'monitor.up'],
+      // On-chain trigger() tx of the funded dead-man's switch, when this liveness is backed by one.
+      // Heartbeat/active monitors stop via the off-chain alert channels above, so there is no tx.
+      tx: null as string | null,
     },
     // A deliberate halt is an operator pause; a miss is not acknowledged. Lets an agent prove it
-    // halted on purpose rather than having silently died.
+    // halted on purpose rather than having silently died, and names who acknowledged it.
     operatorAck: {
       acknowledged: liveness === 'halted_by_operator',
+      by: liveness === 'halted_by_operator' ? input.ownerAddress : null,
       lastTransition: input.lastEvent
         ? {
             to: input.lastEvent.toStatus,
@@ -187,5 +193,8 @@ export function buildMonitorReceipt(input: MonitorReceiptInput) {
         : null,
       deadSince: m.deadSince ? m.deadSince.toISOString() : null,
     },
+    // Self-describing: anyone can re-fetch a fresh receipt here and compare, so a stale "alive" can't
+    // be passed off as current.
+    replayUrl: `${input.base.replace(/\/$/, '')}/v1/monitors/${m.id}/receipt`,
   };
 }
