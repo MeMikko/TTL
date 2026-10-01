@@ -1,4 +1,5 @@
 import { bodyLimit } from 'hono/body-limit';
+import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { secureHeaders } from 'hono/secure-headers';
 import { PaymentRequiredError } from '../core/billing.js';
@@ -6,7 +7,12 @@ import { ApiError } from '../core/errors.js';
 import { RateLimiter } from '../core/rate-limit.js';
 import { VERSION } from '../core/version.js';
 import { networkInfo } from '../core/network.js';
-import { createPaymentGateway, PAYMENT_REQUIRED_HEADER } from '../core/x402.js';
+import {
+  createPaymentGateway,
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
+  PAYMENT_SIGNATURE_HEADER,
+} from '../core/x402.js';
 import { clientIp } from './client-ip.js';
 import type { AppDeps } from './context.js';
 import { requireAuth } from './middleware/auth.js';
@@ -44,7 +50,53 @@ export function createApp(deps: AppDeps) {
   const app = createRouter();
 
   app.use('*', requestId);
-  app.use('*', secureHeaders());
+  app.use(
+    '*',
+    secureHeaders({
+      // Pages are server-rendered templates with inline <style>/<script> and no untrusted data in
+      // script context, so 'unsafe-inline' is an accepted trade-off; everything else is locked down.
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        formAction: ["'self'"],
+      },
+      permissionsPolicy: {
+        camera: [],
+        microphone: [],
+        geolocation: [],
+        usb: [],
+        payment: [],
+        accelerometer: [],
+        gyroscope: [],
+        magnetometer: [],
+      },
+    }),
+  );
+
+  // CORS for browser-based agents. Bearer-auth API with no cookies, so a wildcard origin is safe;
+  // runs before rate-limit and auth so OPTIONS preflight is answered without a token (it 401s
+  // otherwise). Exposes the x402 and rate-limit response headers so browser clients can read them.
+  const apiCors = cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', PAYMENT_SIGNATURE_HEADER],
+    exposeHeaders: [
+      PAYMENT_REQUIRED_HEADER,
+      PAYMENT_RESPONSE_HEADER,
+      'RateLimit-Limit',
+      'RateLimit-Remaining',
+      'Retry-After',
+    ],
+    maxAge: 86_400,
+  });
+  app.use('/v1/*', apiCors);
+  app.use('/mcp', apiCors);
 
   app.use(
     '/v1/*',
