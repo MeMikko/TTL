@@ -13,7 +13,9 @@ import {
   updateMonitor,
   type MonitorsDeps,
 } from '../../core/monitors.js';
+import { networkInfo } from '../../core/network.js';
 import { RateLimiter } from '../../core/rate-limit.js';
+import { buildMonitorReceipt, createReceiptSigner } from '../../core/receipts.js';
 import type { AppDeps } from '../context.js';
 import { applyRateLimit } from '../middleware/rate-limit.js';
 import { createRouter } from '../router.js';
@@ -149,6 +151,37 @@ const routes = {
       ...errorResponses(400, 401, 403, 404, 429),
     },
   }),
+  receipt: createRoute({
+    method: 'get',
+    path: '/v1/monitors/{id}/receipt',
+    tags: ['monitors'],
+    summary: "Signed liveness receipt — a portable, verifiable attestation of the monitor's state",
+    description:
+      'Returns a server-signed (Ed25519) receipt an agent can hand to a third party to prove its ' +
+      'liveness: in particular that it halted on purpose (`halted_by_operator`) rather than silently ' +
+      'missing its window (`missed_window`). Verify offline against the public key at ' +
+      '`/.well-known/time2live-receipts.json` (Ed25519 over the canonical JSON of `receipt`: object ' +
+      'keys sorted recursively, no whitespace).',
+    security,
+    request: { params: monIdParam },
+    responses: {
+      200: {
+        description: 'Signed receipt',
+        content: jsonContent(
+          z.object({
+            receipt: z.record(z.string(), z.unknown()),
+            signature: z.object({
+              alg: z.literal('Ed25519'),
+              keyId: z.string(),
+              publicKey: z.string(),
+              value: z.string(),
+            }),
+          }),
+        ),
+      },
+      ...errorResponses(401, 403, 404, 429),
+    },
+  }),
   ping: createRoute({
     method: 'post',
     path: '/v1/heartbeat/{id}',
@@ -190,6 +223,8 @@ export function monitorRoutes(deps: AppDeps) {
     deps.now ? () => deps.now!().getTime() : undefined,
   );
   const render = (m: Parameters<typeof serializeMonitor>[0]) => serializeMonitor(m, base);
+  const receiptSigner = createReceiptSigner(deps.config.ENCRYPTION_KEY);
+  const receiptNetwork = networkInfo(deps.config).x402Network ?? 'none';
   const app = createRouter();
 
   app.openapi(routes.create, async (c) => {
@@ -312,6 +347,28 @@ export function monitorRoutes(deps: AppDeps) {
       },
       200,
     );
+  });
+
+  app.openapi(routes.receipt, async (c) => {
+    const m = await getMonitor(db, c.get('account').id, c.req.valid('param').id);
+    const [lastEvent] = await db
+      .select()
+      .from(schema.monitorEvents)
+      .where(eq(schema.monitorEvents.monitorId, m.id))
+      .orderBy(desc(schema.monitorEvents.id))
+      .limit(1);
+    const receipt = buildMonitorReceipt({
+      monitor: m,
+      lastEvent: lastEvent
+        ? { toStatus: lastEvent.toStatus, reason: lastEvent.reason, at: lastEvent.at }
+        : null,
+      ownerAddress: c.get('account').walletAddress,
+      network: receiptNetwork,
+      service: 'time2live',
+      now: now(),
+    });
+    c.header('cache-control', 'no-store');
+    return c.json({ receipt, signature: receiptSigner.sign(receipt) }, 200);
   });
 
   app.openapi(routes.ping, async (c) => {
