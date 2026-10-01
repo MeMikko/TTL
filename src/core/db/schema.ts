@@ -270,6 +270,11 @@ export const monitors = pgTable(
     checkUrl: text('check_url'),
     /** Active mode: how often we probe (seconds); must be < ttlSeconds. */
     checkIntervalSeconds: integer('check_interval_seconds'),
+    /** Active mode: required exact HTTP status (null = any 2xx). */
+    checkExpectStatus: integer('check_expect_status'),
+    /** Active mode: the response body must contain this substring (null = no body assertion), so a
+     * hollow 200 from a closed-but-routing front door fails. Matched against the first ~4 KB. */
+    checkBodyContains: text('check_body_contains'),
     /** Active mode: when we last probed, and the outcome (for the UI and the liveness receipt). */
     lastProbeAt: ts('last_probe_at'),
     lastProbeOk: boolean('last_probe_ok'),

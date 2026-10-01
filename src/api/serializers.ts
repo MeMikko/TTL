@@ -92,7 +92,11 @@ export function serializeMonitor(m: Monitor, publicBaseUrl: string) {
     mode: m.mode,
     check:
       m.mode === 'active' && m.checkUrl
-        ? { url: m.checkUrl, intervalSeconds: m.checkIntervalSeconds ?? 0 }
+        ? {
+            url: m.checkUrl,
+            intervalSeconds: m.checkIntervalSeconds ?? 0,
+            expect: { status: m.checkExpectStatus, bodyContains: m.checkBodyContains },
+          }
         : null,
     lastProbe:
       m.mode === 'active'

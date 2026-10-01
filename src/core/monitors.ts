@@ -37,6 +37,10 @@ export interface MonitorInput {
   checkUrl?: string | null;
   /** Active mode: probe interval in seconds; must be ≥ 30 and < ttlSeconds. */
   checkIntervalSeconds?: number | null;
+  /** Active mode: required exact HTTP status (null/absent = any 2xx). */
+  checkExpectStatus?: number | null;
+  /** Active mode: the response body must contain this substring (defeats a hollow 200). */
+  checkBodyContains?: string | null;
 }
 
 export type MonitorEventName = 'monitor.down' | 'monitor.up' | 'monitor.unpaid';
@@ -161,7 +165,8 @@ export async function createMonitor(
     : null;
   const alertEmail = requireEmailConfigured(deps, input.alertEmail);
   const mode = input.mode ?? 'heartbeat';
-  const { checkUrl, checkIntervalSeconds } = await validateActiveCheck(deps, mode, input);
+  const { checkUrl, checkIntervalSeconds, checkExpectStatus, checkBodyContains } =
+    await validateActiveCheck(deps, mode, input);
   const limit = TIERS[tierFor(account)].monitors;
   return deps.db.transaction(async (tx) => {
     // Serialise per account so two concurrent creates cannot both take the last free slot.
@@ -199,6 +204,8 @@ export async function createMonitor(
         mode,
         checkUrl,
         checkIntervalSeconds,
+        checkExpectStatus,
+        checkBodyContains,
         alertWebhookUrl,
         alertWebhookUrl2,
         alertTelegram: input.alertTelegram,
@@ -221,17 +228,31 @@ export async function createMonitor(
 async function validateActiveCheck(
   deps: MonitorsDeps,
   mode: 'heartbeat' | 'active',
-  input: Pick<MonitorInput, 'checkUrl' | 'checkIntervalSeconds' | 'ttlSeconds'>,
-): Promise<{ checkUrl: string | null; checkIntervalSeconds: number | null }> {
+  input: Pick<
+    MonitorInput,
+    'checkUrl' | 'checkIntervalSeconds' | 'ttlSeconds' | 'checkExpectStatus' | 'checkBodyContains'
+  >,
+): Promise<{
+  checkUrl: string | null;
+  checkIntervalSeconds: number | null;
+  checkExpectStatus: number | null;
+  checkBodyContains: string | null;
+}> {
   if (mode === 'heartbeat') {
-    if (input.checkUrl || input.checkIntervalSeconds != null) {
-      throw new ApiError(
-        400,
-        'invalid_request',
-        'checkUrl/checkIntervalSeconds require mode "active"',
-      );
+    if (
+      input.checkUrl ||
+      input.checkIntervalSeconds != null ||
+      input.checkExpectStatus != null ||
+      input.checkBodyContains
+    ) {
+      throw new ApiError(400, 'invalid_request', 'check/expect fields require mode "active"');
     }
-    return { checkUrl: null, checkIntervalSeconds: null };
+    return {
+      checkUrl: null,
+      checkIntervalSeconds: null,
+      checkExpectStatus: null,
+      checkBodyContains: null,
+    };
   }
   if (!input.checkUrl)
     throw new ApiError(400, 'invalid_request', 'mode "active" requires checkUrl');
@@ -246,8 +267,17 @@ async function validateActiveCheck(
       'checkIntervalSeconds must be shorter than ttlSeconds',
     );
   }
+  const status = input.checkExpectStatus;
+  if (status != null && (status < 100 || status > 599)) {
+    throw new ApiError(400, 'invalid_request', 'check.expect.status must be a valid HTTP status');
+  }
   const checkUrl = await assertWebhookUrl(deps.policy, input.checkUrl, deps.resolve);
-  return { checkUrl, checkIntervalSeconds: interval };
+  return {
+    checkUrl,
+    checkIntervalSeconds: interval,
+    checkExpectStatus: status ?? null,
+    checkBodyContains: input.checkBodyContains || null,
+  };
 }
 
 /**

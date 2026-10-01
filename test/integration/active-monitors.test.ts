@@ -18,6 +18,7 @@ const devPolicy: TargetPolicy = {
 const client = createHttpClient(devPolicy);
 
 let probeStatus = 200;
+let probeBody = 'ok';
 let target: Awaited<ReturnType<typeof startTargetServer>>;
 
 const app = buildApp(database, {
@@ -27,13 +28,14 @@ const app = buildApp(database, {
 beforeAll(async () => {
   target = await startTargetServer((_r, res) => {
     res.statusCode = probeStatus;
-    res.end('ok');
+    res.end(probeBody);
   });
 });
 
 beforeEach(async () => {
   await resetDb(database);
   probeStatus = 200;
+  probeBody = 'ok';
 });
 
 afterAll(async () => {
@@ -62,7 +64,11 @@ const getMonitor = async (key: string, id: string) =>
   (await (await app.request(`/v1/monitors/${id}`, { headers: bearer(key) })).json()) as {
     status: string;
     mode: string;
-    check: { url: string; intervalSeconds: number } | null;
+    check: {
+      url: string;
+      intervalSeconds: number;
+      expect: { status: number | null; bodyContains: string | null };
+    } | null;
     lastProbe: { ok: boolean | null } | null;
   };
 
@@ -106,6 +112,36 @@ describe('active-check monitors', () => {
     expect((await probeActiveMonitors(db, client, t0)).probed).toBe(1);
     // Too soon (only 5s later, interval is 30s) → nothing due.
     expect((await probeActiveMonitors(db, client, new Date(t0.getTime() + 5_000))).probed).toBe(0);
+  });
+
+  it('a body assertion fails a hollow 2xx and records why', async () => {
+    const me = await signIn(app);
+    const created = (await (
+      await createActive(me.apiKey.key, {
+        check: {
+          url: target.url('/health'),
+          intervalSeconds: 30,
+          expect: { bodyContains: '"db":"ok"' },
+        },
+      })
+    ).json()) as { id: string };
+
+    const t0 = new Date();
+    // 200 but the body lacks the required marker → not healthy.
+    probeBody = 'temporarily degraded';
+    const r1 = await probeActiveMonitors(db, client, t0);
+    expect(r1).toMatchObject({ probed: 1, up: 0, down: 1 });
+    let m = await getMonitor(me.apiKey.key, created.id);
+    expect(m.status).not.toBe('alive');
+    expect(m.lastProbe?.ok).toBe(false);
+
+    // Now the real work shows up in the body → healthy.
+    probeBody = '{"db":"ok","queue":"ok"}';
+    const r2 = await probeActiveMonitors(db, client, new Date(t0.getTime() + 31_000));
+    expect(r2).toMatchObject({ probed: 1, up: 1 });
+    m = await getMonitor(me.apiKey.key, created.id);
+    expect(m.status).toBe('alive');
+    expect(m.check?.expect).toMatchObject({ bodyContains: '"db":"ok"' });
   });
 
   it('rejects an active monitor without a check, and a check without active mode', async () => {
