@@ -74,6 +74,14 @@ describe('liveness receipts', () => {
     expect((body.receipt.missedWindow as { ttlSeconds: number }).ttlSeconds).toBe(300);
     expect(body.signature.alg).toBe('Ed25519');
 
+    // Self-describing extras: a replay URL, an on-chain-tx slot, and no operator ack while alive.
+    expect(body.receipt.replayUrl).toBe(`https://time2live.xyz/v1/monitors/${mon.id}/receipt`);
+    expect((body.receipt.stopAction as { tx: string | null }).tx).toBe(null);
+    expect(body.receipt.operatorAck as { acknowledged: boolean; by: string | null }).toMatchObject({
+      acknowledged: false,
+      by: null,
+    });
+
     // The signature verifies with the receipt's own key…
     expect(verifyReceipt(body.receipt, body.signature)).toBe(true);
     // …which matches the published key.
@@ -96,7 +104,11 @@ describe('liveness receipts', () => {
     ).json()) as { receipt: Record<string, unknown>; signature: Signature };
 
     expect(body.receipt.liveness).toBe('halted_by_operator');
-    expect((body.receipt.operatorAck as { acknowledged: boolean }).acknowledged).toBe(true);
+    const ack = body.receipt.operatorAck as { acknowledged: boolean; by: string | null };
+    expect(ack.acknowledged).toBe(true);
+    // operator_ack_by names who halted it (the account wallet, lowercased).
+    expect(ack.by).toBe(body.receipt.operator);
+    expect(typeof ack.by).toBe('string');
     expect(verifyReceipt(body.receipt, body.signature)).toBe(true);
   });
 
