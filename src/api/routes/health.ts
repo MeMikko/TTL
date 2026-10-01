@@ -8,12 +8,13 @@ import { VERSION } from '../../core/version.js';
  * GET /healthz        — process liveness (no dependencies), for container health checks.
  * GET /healthz?deep=1 — also checks Postgres and that a worker ticked recently; returns 503
  *                       otherwise. External uptime monitoring should poll this variant.
+ * GET /health         — alias for /healthz (common convention).
  */
 export function healthRoutes(deps: AppDeps) {
   const now = deps.now ?? (() => new Date());
   const app = new Hono<AppEnv>();
 
-  app.get('/healthz', async (c) => {
+  app.on('GET', ['/healthz', '/health'], async (c) => {
     const deep = ['1', 'true'].includes(c.req.query('deep') ?? '');
     if (!deep) return c.json({ status: 'ok', version: VERSION });
 
