@@ -30,7 +30,12 @@ tokens. The agent (or the owner) pings it at least every `ttl` seconds. If the p
 ## Robustness
 
 - **Bounded:** at most 20 registered tokens. `trigger()` with 20 tokens stays well below
-  1M gas (tested).
+  1M gas (tested). Register only tokens you trust: a token whose transfer deliberately burns all
+  forwarded gas can stall `trigger()`, but since the owner chooses the tokens this only risks the
+  owner's own switch (no per-token gas cap is imposed, as it would break legitimate heavy tokens).
+- **`sweep()` honours the termination cause.** After `trigger()` it forwards leftovers to the
+  beneficiary (or its redirect); after a mutual cancellation it forwards them to the owner. A
+  transfer that failed at termination can therefore never be swept to the wrong party.
 - **A broken token can't block the switch.** Token transfers in `trigger()` use `trySafeTransfer`,
   and balances are read with a guarded static call. A reverting or paused token emits
   `TransferFailed` and stays in the contract for `sweep()`. The same applies if the beneficiary

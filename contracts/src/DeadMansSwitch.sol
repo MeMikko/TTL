@@ -51,6 +51,9 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
     uint64 public lastPing;
     bool public triggered;
     bool public cancelProposed;
+    /// @notice True when the switch was terminated by mutual cancellation (funds return to the
+    /// owner) rather than by `trigger()` (funds go to the beneficiary). Routes `sweep()`.
+    bool public cancelled;
     bool private _initialized;
     /// @notice Optional cut of the ETH balance paid to whoever calls `trigger()` (basis points).
     uint16 public triggerRewardBps;
@@ -268,6 +271,12 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         _ping();
     }
 
+    /// @notice Registers a token so `trigger()` sweeps it to the beneficiary. Owner, while live.
+    /// @dev Register only tokens you trust. `trigger()` tolerates a token that reverts or returns
+    /// junk (it is skipped and logged), but a token whose transfer deliberately burns all forwarded
+    /// gas can make `trigger()` run out of gas. Because the owner chooses the tokens this only risks
+    /// the owner's own switch, so no per-token gas cap is imposed (it would break legitimate tokens
+    /// with heavy transfer logic); the keeper separately bounds total gas via `KEEPER_MAX_GAS`.
     function addToken(address token) external onlyOwner whileLive {
         _addToken(token);
     }
@@ -307,6 +316,7 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         if (msg.sender != beneficiary) revert NotBeneficiary();
         if (!cancelProposed) revert CancelNotProposed();
         triggered = true;
+        cancelled = true;
         cancelProposed = false;
         address to = owner;
         emit Cancelled(msg.sender);
@@ -340,7 +350,9 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         if (block.timestamp <= deadline()) revert NotExpired();
         triggered = true;
         address to = _payoutTo();
-        emit Triggered(msg.sender, to);
+        // Event reports the switch's beneficiary (its documented meaning); the actual recipient is
+        // `to`, which differs only when the beneficiary set a redirect (see `PayoutAddressChanged`).
+        emit Triggered(msg.sender, beneficiary);
 
         uint256 n = _tokens.length;
         for (uint256 i; i < n; ++i) {
@@ -365,11 +377,13 @@ contract DeadMansSwitch is ReentrancyGuardTransient {
         }
     }
 
-    /// @notice After triggering, anyone may forward the remaining balance of any token
-    /// (`address(0)` = ETH) to the beneficiary.
+    /// @notice After termination, anyone may forward the remaining balance of any token
+    /// (`address(0)` = ETH) to its rightful recipient: the beneficiary (or its redirect) after a
+    /// `trigger()`, or the owner after a mutual cancellation. This mirrors how the assets were sent
+    /// at termination, so leftovers from a failed transfer can never reach the wrong party.
     function sweep(address token) external nonReentrant {
         if (!triggered) revert NotTriggered();
-        address to = _payoutTo();
+        address to = cancelled ? owner : _payoutTo();
         uint256 amount;
         if (token == address(0)) {
             amount = address(this).balance;
