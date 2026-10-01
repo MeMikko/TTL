@@ -78,6 +78,13 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
     return c.body(dashboardHtml(base, net));
   });
 
+  // Real-time analytics (operator-gated at the data endpoint): fleet-wide, live service stats.
+  app.get('/analytics', (c) => {
+    c.header('cache-control', cache);
+    c.header('content-type', 'text/html; charset=utf-8');
+    return c.body(analyticsHtml(base, net));
+  });
+
   let tools: Promise<ToolList> | undefined;
   const card = async (c: Context<AppEnv>) => {
     tools ??= listTools().catch((err: unknown) => {
@@ -369,6 +376,7 @@ curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping be
     <a href="${base}/llms.txt">llms.txt</a>
     <a href="${base}/mcp">mcp</a>
     <a href="${base}/dashboard">operator</a>
+    <a href="${base}/analytics">analytics</a>
     <a href="https://x402.org">x402</a>
   </footer>
 </div>
@@ -401,9 +409,9 @@ function dashboardHtml(base: string, net: NetworkInfo): string {
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 var(--mono);-webkit-font-smoothing:antialiased}
-  .wrap{max-width:900px;margin:0 auto;padding:0 16px}
-  header{padding:36px 0 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600}
+  .wrap{max-width:900px;margin:0 auto;padding:0 clamp(14px,4vw,24px)}
+  header{padding:clamp(24px,6vw,36px) 0 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;font-size:clamp(17px,4.6vw,20px);font-weight:600}
   .pulse{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 2.4s infinite}
   .netbadge{margin-left:10px;padding:2px 10px;border-radius:20px;font-size:12px;border:1px solid var(--line);font-weight:400}
   .netbadge.live{color:var(--accent);border-color:var(--accent)}
@@ -418,10 +426,11 @@ function dashboardHtml(base: string, net: NetworkInfo): string {
   button:disabled{opacity:.5;cursor:default}
   section{padding:22px 0;border-bottom:1px solid var(--line)}
   h2{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);margin:0 0 14px}
-  .row{display:flex;gap:20px;flex-wrap:wrap}
-  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;min-width:130px}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
   .stat .k{color:var(--dim);font-size:12px}
   .stat .v{font-size:18px;margin-top:2px}
+  .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
   table{width:100%;border-collapse:collapse;font-size:13px}
   td,th{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
   th{color:var(--dim);font-weight:500}
@@ -431,9 +440,11 @@ function dashboardHtml(base: string, net: NetworkInfo): string {
   .s-paused,.s-new,.s-completed{color:var(--dim)}
   .muted{color:var(--dim)}
   .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-  #err{color:var(--red);min-height:18px;margin:10px 0}
+  .actions button{flex:1 1 auto}
+  #err{color:var(--red);min-height:18px;margin:10px 0;overflow-wrap:anywhere}
   .hide{display:none}
-  input{font:inherit;background:var(--panel);border:1px solid var(--line);color:var(--fg);padding:8px 12px;border-radius:8px;min-width:280px}
+  input{font:inherit;background:var(--panel);border:1px solid var(--line);color:var(--fg);padding:8px 12px;border-radius:8px;width:100%;max-width:320px}
+  @media(min-width:560px){.actions button{flex:0 0 auto}}
 </style>
 </head>
 <body>
@@ -442,6 +453,7 @@ function dashboardHtml(base: string, net: NetworkInfo): string {
     <span class="pulse"></span>
     <div class="brand">time2live<span class="muted" style="font-weight:400">/ operator</span>${badge}</div>
     <div class="grow"></div>
+    <a href="${base}/analytics" class="muted" style="font-size:13px">analytics →</a>
     <span id="who" class="muted"></span>
     <button id="signout" class="hide">Sign out</button>
   </header>
@@ -471,15 +483,15 @@ function dashboardHtml(base: string, net: NetworkInfo): string {
     </section>
     <section>
       <h2 id="mon-h">Monitors</h2>
-      <table><thead><tr><th>Name</th><th>Status</th><th>Last ping</th><th>Expires</th><th>Billing</th></tr></thead><tbody id="mon"></tbody></table>
+      <div class="tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Last ping</th><th>Expires</th><th>Billing</th></tr></thead><tbody id="mon"></tbody></table></div>
     </section>
     <section>
       <h2 id="job-h">Jobs</h2>
-      <table><thead><tr><th>Name</th><th>Status</th><th>Next run</th></tr></thead><tbody id="job"></tbody></table>
+      <div class="tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Next run</th></tr></thead><tbody id="job"></tbody></table></div>
     </section>
     <section>
       <h2>Recent payments</h2>
-      <table><thead><tr><th>Product</th><th>Amount</th><th>When</th></tr></thead><tbody id="pay"></tbody></table>
+      <div class="tablewrap"><table><thead><tr><th>Product</th><th>Amount</th><th>When</th></tr></thead><tbody id="pay"></tbody></table></div>
     </section>
   </div>
 </div>
@@ -597,6 +609,233 @@ $('revoke').onclick = async () => {
 
 $('nowallet').textContent = window.ethereum ? '' : 'No EVM wallet detected — open this page in a wallet browser or an extension-enabled browser.';
 if (getToken()) load().catch(() => showLogin(''));
+</script>
+</body>
+</html>
+`;
+}
+
+function analyticsHtml(base: string, net: NetworkInfo): string {
+  const badge =
+    net.mode === 'live'
+      ? '<span class="netbadge live">● Live · Base mainnet</span>'
+      : net.mode === 'test'
+        ? `<span class="netbadge test">● Testnet · ${net.chain}</span>`
+        : '<span class="netbadge test">● Free / eval</span>';
+  // Only `base` is interpolated (our own config); all figures render client-side with textContent.
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>time2live — analytics</title>
+<meta name="robots" content="noindex">
+<style>
+  :root {
+    --bg:#0a0e14; --panel:#111823; --line:#1e2a3a; --fg:#d7e0ea; --dim:#7d8ea3;
+    --accent:#35d07f; --red:#ff5c5c; --amber:#f0b429;
+    --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 var(--mono);-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:960px;margin:0 auto;padding:0 clamp(14px,4vw,24px)}
+  header{padding:clamp(24px,6vw,36px) 0 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;font-size:clamp(17px,4.6vw,20px);font-weight:600}
+  .pulse{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(53,208,127,.5)}70%{box-shadow:0 0 0 10px rgba(53,208,127,0)}100%{box-shadow:0 0 0 0 rgba(53,208,127,0)}}
+  @media(prefers-reduced-motion:reduce){.pulse{animation:none}}
+  .netbadge{padding:2px 10px;border-radius:20px;font-size:12px;border:1px solid var(--line);font-weight:400;white-space:nowrap}
+  .netbadge.live{color:var(--accent);border-color:var(--accent)}
+  .netbadge.test{color:var(--amber);border-color:var(--amber)}
+  .muted{color:var(--dim)}
+  .grow{flex:1}
+  button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:8px 14px;border-radius:8px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:default}
+  section{padding:22px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);margin:0 0 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 2.4s infinite}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:14px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .tile .k{color:var(--dim);font-size:12px;letter-spacing:.5px;text-transform:uppercase}
+  .tile .v{font-size:clamp(26px,7vw,34px);font-weight:600;margin:6px 0 2px;line-height:1.1}
+  .tile .sub{color:var(--dim);font-size:12.5px;overflow-wrap:anywhere}
+  .tile .sub b{color:var(--fg);font-weight:600}
+  .ok{color:var(--accent)} .bad{color:var(--red)} .warn{color:var(--amber)}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .actions button{flex:1 1 auto}
+  @media(min-width:560px){.actions button{flex:0 0 auto}}
+  #err{color:var(--red);min-height:18px;margin:10px 0;overflow-wrap:anywhere}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="pulse"></span>
+    <div class="brand">time2live<span class="muted" style="font-weight:400">/ analytics</span>${badge}</div>
+    <div class="grow"></div>
+    <a href="${base}/dashboard" class="muted" style="font-size:13px">← operator</a>
+    <span id="who" class="muted"></span>
+    <button id="signout" class="hide">Sign out</button>
+  </header>
+
+  <div id="err"></div>
+
+  <section id="login">
+    <h2>Sign in</h2>
+    <p class="muted">Fleet-wide analytics are restricted to the operator wallet. Connect and sign to
+    view live, service-wide statistics. The session lasts one hour and is never stored on the server.</p>
+    <div class="actions">
+      <button id="connect">Connect wallet &amp; sign in</button>
+    </div>
+    <p class="muted" id="nowallet" style="margin-top:14px"></p>
+  </section>
+
+  <div id="app" class="hide">
+    <section>
+      <h2><span class="live-dot"></span>Live <span class="muted" id="updated" style="letter-spacing:0;text-transform:none"></span></h2>
+      <div class="grid" id="tiles"></div>
+    </section>
+  </div>
+</div>
+<script>
+const BASE = ${JSON.stringify(base)};
+const $ = (id) => document.getElementById(id);
+const err = (m) => { $('err').textContent = m || ''; };
+const tokenKey = 't2l_operator_token';
+const getToken = () => { try { return sessionStorage.getItem(tokenKey); } catch { return null; } };
+const setToken = (t) => { try { t ? sessionStorage.setItem(tokenKey, t) : sessionStorage.removeItem(tokenKey); } catch {} };
+const nf = (n) => Number(n || 0).toLocaleString('en-US');
+
+let timer = null;
+function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+function showLogin(msg) {
+  stopTimer();
+  $('app').classList.add('hide'); $('login').classList.remove('hide');
+  $('signout').classList.add('hide'); $('who').textContent = '';
+  if (msg) err(msg);
+}
+
+function tile(k, v, subHtml) {
+  const d = document.createElement('div'); d.className = 'tile';
+  const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+  const vv = document.createElement('div'); vv.className = 'v'; vv.textContent = v;
+  const ss = document.createElement('div'); ss.className = 'sub';
+  if (subHtml) ss.append(...subHtml);
+  d.append(kk, vv, ss); return d;
+}
+function frag(parts) {
+  // parts: array of [text, className?]; joined with " · "
+  const out = [];
+  parts.forEach((p, i) => {
+    if (i) out.push(document.createTextNode(' · '));
+    const s = document.createElement('span');
+    s.textContent = p[0]; if (p[1]) s.className = p[1];
+    out.push(s);
+  });
+  return out;
+}
+
+function render(a) {
+  const acc = a.accounts, mon = a.monitors, job = a.jobs, run = a.runs, pay = a.payments, sw = a.switches;
+  const ms = mon.byStatus || {}, js = job.byStatus || {};
+  const tiles = [
+    tile('Accounts', nf(acc.total), frag([
+      [nf(acc.activated) + ' activated'],
+      [nf(acc.active) + ' active'],
+      ...(acc.frozen ? [[nf(acc.frozen) + ' frozen', 'bad']] : []),
+      ['+' + nf(acc.new) + ' / 24h', 'ok'],
+    ])),
+    tile('Monitors', nf(mon.total), frag([
+      [nf(ms.alive || 0) + ' alive', 'ok'],
+      [nf(ms.dead || 0) + ' dead', (ms.dead ? 'bad' : '')],
+      [nf(ms.paused || 0) + ' paused'],
+      [nf(ms.new || 0) + ' new'],
+    ])),
+    tile('Jobs', nf(job.total), frag([
+      [nf(js.active || 0) + ' active', 'ok'],
+      [nf(js.paused || 0) + ' paused'],
+      [nf(js.completed || 0) + ' done'],
+    ])),
+    tile('Runs / 24h', nf(run.recent), frag([
+      [nf(run.succeeded) + ' ok', 'ok'],
+      [nf(run.failed) + ' failed', (run.failed ? 'bad' : '')],
+      [nf(run.total) + ' all-time'],
+    ])),
+    tile('Revenue', pay.revenueUsd, frag([
+      [pay.recentUsd + ' / 24h', 'ok'],
+      [nf(pay.count) + ' payments'],
+    ])),
+    tile('On-chain switches', nf(sw.total), frag([
+      [nf(sw.live) + ' live', 'ok'],
+      [nf(sw.triggered) + ' triggered', 'warn'],
+      [nf(sw.skipped) + ' skipped'],
+    ])),
+  ];
+  $('tiles').replaceChildren(...tiles);
+  $('updated').textContent = '· updated ' + new Date(a.generatedAt).toLocaleTimeString();
+}
+
+async function load() {
+  const res = await fetch(BASE + '/v1/analytics', {
+    headers: { authorization: 'Bearer ' + getToken() },
+  });
+  if (res.status === 401) { setToken(null); showLogin('Session expired — sign in again.'); return; }
+  if (res.status === 403) { stopTimer(); err('This wallet is not authorized to view analytics.'); return; }
+  if (res.status === 404) { stopTimer(); err('Analytics is not enabled on this instance.'); return; }
+  if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b.error && b.error.message) || ('HTTP ' + res.status)); }
+  err('');
+  render(await res.json());
+  $('login').classList.add('hide'); $('app').classList.remove('hide'); $('signout').classList.remove('hide');
+}
+
+function startTimer() {
+  stopTimer();
+  timer = setInterval(() => {
+    if (document.hidden) return; // be polite when the tab is backgrounded
+    load().catch((e) => err(e.message));
+  }, 5000);
+}
+
+async function signIn() {
+  err('');
+  const eth = window.ethereum;
+  if (!eth) { err('No EVM wallet found in this browser.'); return; }
+  $('connect').disabled = true;
+  try {
+    const [address] = await eth.request({ method: 'eth_requestAccounts' });
+    const ch = await (await fetch(BASE + '/v1/auth/challenge', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address, chainId: 8453 }),
+    })).json();
+    if (!ch.message) throw new Error('could not get a challenge');
+    const signature = await eth.request({ method: 'personal_sign', params: [ch.message, address] });
+    const res = await fetch(BASE + '/v1/auth/session', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: ch.message, signature }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error((body.error && body.error.message) || 'sign-in failed');
+    setToken(body.token);
+    $('who').textContent = address.slice(0, 6) + '…' + address.slice(-4);
+    await load();
+    if (!$('app').classList.contains('hide')) startTimer();
+  } catch (e) {
+    err(e && e.message ? e.message : 'sign-in failed');
+  } finally {
+    $('connect').disabled = false;
+  }
+}
+
+$('connect').onclick = signIn;
+$('signout').onclick = () => { setToken(null); showLogin(''); };
+document.addEventListener('visibilitychange', () => { if (!document.hidden && timer) load().catch((e) => err(e.message)); });
+
+$('nowallet').textContent = window.ethereum ? '' : 'No EVM wallet detected — open this page in a wallet browser or an extension-enabled browser.';
+if (getToken()) load().then(() => { if (!$('app').classList.contains('hide')) startTimer(); }).catch(() => showLogin(''));
 </script>
 </body>
 </html>

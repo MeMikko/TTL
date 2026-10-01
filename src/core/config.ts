@@ -35,6 +35,19 @@ const envSchema = z
 
     MAX_API_KEYS_PER_ACCOUNT: z.coerce.number().int().min(1).default(20),
 
+    /**
+     * Real-time analytics dashboard (GET /analytics page, GET /v1/analytics data): global service
+     * statistics, gated to this single operator wallet (compared lowercased). Empty disables it
+     * entirely (the data endpoint 404s and the page says so).
+     */
+    ANALYTICS_ADDRESS: z
+      .string()
+      .default('0x8520B3693a2Cf3c2bEa3a505Af3A9c1b093954c7')
+      .transform((s) => s.trim().toLowerCase())
+      .refine((s) => s === '' || /^0x[0-9a-f]{40}$/.test(s), {
+        message: 'must be empty or a 0x-prefixed EVM address',
+      }),
+
     /** Requests per minute (token bucket capacity; refills continuously). */
     RATE_LIMIT_IP_PER_MIN: z.coerce.number().int().min(1).default(120),
     RATE_LIMIT_AUTH_IP_PER_MIN: z.coerce.number().int().min(1).default(10),

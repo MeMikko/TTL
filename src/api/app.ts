@@ -17,6 +17,7 @@ import { requestId } from './middleware/request-id.js';
 import { handleMcpRequest } from './mcp.js';
 import { createRouter } from './router.js';
 import { accountRoutes } from './routes/account.js';
+import { analyticsRoutes } from './routes/analytics.js';
 import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { discoveryRoutes } from './routes/discovery.js';
@@ -81,6 +82,7 @@ export function createApp(deps: AppDeps) {
     '/v1/runs/*',
     '/v1/monitors/*',
     '/v1/billing/*',
+    '/v1/analytics',
   ]) {
     app.use(path, auth);
   }
@@ -152,6 +154,7 @@ export function createApp(deps: AppDeps) {
   app.route('/', authRoutes(deps));
   app.route('/', keyRoutes(deps));
   app.route('/', accountRoutes(deps));
+  app.route('/', analyticsRoutes(deps));
   app.route('/', jobRoutes(deps));
   app.route('/', monitorRoutes(deps));
   app.route('/', billingRoutes(deps, gateway));
