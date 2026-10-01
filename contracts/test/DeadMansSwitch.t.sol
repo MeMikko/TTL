@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {DeadMansSwitch} from "../src/DeadMansSwitch.sol";
 import {DeadMansSwitchFactory} from "../src/DeadMansSwitchFactory.sol";
-import {BrokenToken, FeeOnTransferToken, MockToken, RebasingToken} from "./mocks/Tokens.sol";
+import {BlocklistToken, BrokenToken, FeeOnTransferToken, MockToken, RebasingToken} from "./mocks/Tokens.sol";
 import {EthRejecter, ReentrantReceiver} from "./mocks/Actors.sol";
 
 contract DeadMansSwitchTest is Test {
@@ -316,6 +316,90 @@ contract DeadMansSwitchTest is Test {
         assertEq(address(caller).balance, 0); // reward bounced
         assertEq(beneficiary.balance, 4 ether); // everything reached the beneficiary
         assertEq(address(s).balance, 0);
+    }
+
+    // ---- payout redirect (escape hatch for a beneficiary that cannot receive) ------------------
+
+    function test_setPayoutAddressOnlyBeneficiary() public {
+        vm.prank(owner);
+        vm.expectRevert(DeadMansSwitch.NotBeneficiary.selector);
+        sw.setPayoutAddress(owner);
+        vm.prank(stranger);
+        vm.expectRevert(DeadMansSwitch.NotBeneficiary.selector);
+        sw.setPayoutAddress(stranger);
+        vm.prank(beneficiary);
+        vm.expectRevert(DeadMansSwitch.ZeroAddress.selector);
+        sw.setPayoutAddress(address(0));
+    }
+
+    function test_payoutRedirectRescuesEthWhenBeneficiaryRejects() public {
+        // Beneficiary is a contract that rejects ETH: trigger leaves the ETH stuck here.
+        EthRejecter rej = new EthRejecter();
+        address[] memory none = new address[](0);
+        vm.prank(owner);
+        DeadMansSwitch s = DeadMansSwitch(factory.createSwitch(agent, address(rej), TTL, none, bytes32("po1")));
+        vm.deal(address(s), 3 ether);
+        vm.warp(s.deadline() + 1);
+        s.trigger();
+        assertEq(address(s).balance, 3 ether); // stuck: beneficiary rejected it
+        assertEq(address(rej).balance, 0);
+
+        // The beneficiary redirects to a reachable address; anyone can then sweep it out.
+        address payout = makeAddr("payout");
+        vm.prank(address(rej));
+        s.setPayoutAddress(payout);
+        s.sweep(address(0));
+        assertEq(payout.balance, 3 ether);
+        assertEq(address(s).balance, 0);
+    }
+
+    function test_payoutRedirectRescuesBlocklistedToken() public {
+        // USDC-style: the token reverts transfers to the (blocklisted) beneficiary.
+        BlocklistToken bt = new BlocklistToken();
+        address blocked = makeAddr("blockedBeneficiary");
+        bt.setBlocked(blocked);
+        vm.prank(owner);
+        DeadMansSwitch s = DeadMansSwitch(factory.createSwitch(agent, blocked, TTL, _one(address(bt)), bytes32("po2")));
+        bt.mint(address(s), 500e18);
+        vm.warp(s.deadline() + 1);
+        s.trigger();
+        assertEq(bt.balanceOf(address(s)), 500e18); // stuck: transfer to blocked beneficiary reverted
+
+        address payout = makeAddr("payout2");
+        vm.prank(blocked); // a blocklisted address can still send transactions
+        s.setPayoutAddress(payout);
+        s.sweep(address(bt));
+        assertEq(bt.balanceOf(payout), 500e18);
+        assertEq(bt.balanceOf(address(s)), 0);
+    }
+
+    function test_triggerUsesPayoutWhenSetBeforeExpiry() public {
+        address payout = makeAddr("payout3");
+        vm.prank(beneficiary);
+        sw.setPayoutAddress(payout);
+        _expire();
+        sw.trigger();
+        assertEq(token.balanceOf(payout), 1_000e18);
+        assertEq(payout.balance, 5 ether);
+        assertEq(token.balanceOf(beneficiary), 0);
+        assertEq(beneficiary.balance, 0);
+    }
+
+    function test_setBeneficiaryClearsPayoutRedirect() public {
+        address payout = makeAddr("oldPayout");
+        vm.prank(beneficiary);
+        sw.setPayoutAddress(payout);
+        // Owner rotates the beneficiary while live; the old redirect must not capture the new one.
+        address newBen = makeAddr("newBeneficiary");
+        vm.prank(owner);
+        sw.setBeneficiary(newBen);
+        assertEq(sw.payoutAddress(), address(0));
+        _expire();
+        sw.trigger();
+        assertEq(token.balanceOf(newBen), 1_000e18);
+        assertEq(newBen.balance, 5 ether);
+        assertEq(token.balanceOf(payout), 0);
+        assertEq(payout.balance, 0);
     }
 
     function test_triggerIsTerminal() public {

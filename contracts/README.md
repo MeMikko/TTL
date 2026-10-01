@@ -35,6 +35,13 @@ tokens. The agent (or the owner) pings it at least every `ttl` seconds. If the p
   and balances are read with a guarded static call. A reverting or paused token emits
   `TransferFailed` and stays in the contract for `sweep()`. The same applies if the beneficiary
   rejects ETH.
+- **A beneficiary that can't receive can still be paid.** If the beneficiary is a contract that
+  rejects ETH, or an address a token blocklists (e.g. USDC/USDT), that transfer would otherwise
+  leave the funds stuck — the beneficiary is fixed and, after the deadline, nobody can change it. So
+  the **beneficiary** (and only the beneficiary) may call `setPayoutAddress(addr)` to redirect their
+  payout to a reachable address; `trigger()` and `sweep()` then pay there. The owner can never
+  redirect, so this adds no way to divert funds away from the beneficiary. `setBeneficiary` clears
+  any redirect so a former beneficiary cannot capture a new one's funds.
 - **Fee-on-transfer and rebasing tokens:** balances are never stored. `deposit` returns and logs
   what actually arrived (the balance difference), and `trigger`, `sweep` and full `withdraw`
   always move the live `balanceOf(this)`. A fee-on-transfer token delivers `balance − fee` to the
