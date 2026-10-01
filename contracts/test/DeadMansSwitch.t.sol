@@ -402,6 +402,46 @@ contract DeadMansSwitchTest is Test {
         assertEq(payout.balance, 0);
     }
 
+    function test_sweepAfterCancelRoutesToOwnerNotBeneficiary() public {
+        // Owner is a contract that rejects ETH. A mutual cancel returns funds to the owner, but the
+        // ETH send fails and stays here. sweep() must target the owner (M1), never the beneficiary.
+        EthRejecter o = new EthRejecter();
+        vm.prank(address(o));
+        DeadMansSwitch s =
+            DeadMansSwitch(factory.createSwitch(agent, beneficiary, TTL, _one(address(token)), bytes32("cx")));
+        token.mint(address(s), 100e18);
+        vm.deal(address(s), 2 ether);
+
+        vm.prank(address(o));
+        s.proposeCancel();
+        vm.prank(beneficiary);
+        s.approveCancel();
+
+        assertTrue(s.cancelled());
+        assertEq(token.balanceOf(address(o)), 100e18); // tokens reached the owner
+        assertEq(address(s).balance, 2 ether); // ETH stuck: owner rejected it
+
+        // sweep targets the owner (reverts because the owner rejects ETH), never the beneficiary.
+        vm.expectRevert(DeadMansSwitch.EthTransferFailed.selector);
+        s.sweep(address(0));
+        assertEq(beneficiary.balance, 0);
+        assertEq(address(s).balance, 2 ether);
+    }
+
+    function test_triggerEventReportsBeneficiaryEvenWithRedirect() public {
+        address payout = makeAddr("payoutEvt");
+        vm.prank(beneficiary);
+        sw.setPayoutAddress(payout);
+        _expire();
+        // Event logs the literal beneficiary; funds go to the redirect.
+        vm.expectEmit(true, true, false, false, address(sw));
+        emit DeadMansSwitch.Triggered(stranger, beneficiary);
+        vm.prank(stranger);
+        sw.trigger();
+        assertEq(payout.balance, 5 ether);
+        assertEq(beneficiary.balance, 0);
+    }
+
     function test_triggerIsTerminal() public {
         _expire();
         sw.trigger();
