@@ -12,6 +12,15 @@ type ToolList = Array<{
   annotations?: unknown;
 }>;
 
+/** Hostname of a base URL, for building e.g. a security.txt contact address. */
+function host(base: string): string {
+  try {
+    return new URL(base).hostname;
+  } catch {
+    return 'time2live.xyz';
+  }
+}
+
 /**
  * Discovery for agents: GET / (service summary), GET /llms.txt (llmstxt.org), and an MCP Server
  * Card at /.well-known/mcp/server-card.json (SEP-1649; /.well-known/mcp.json is an alias).
@@ -33,6 +42,8 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   const net = networkInfo(deps.config);
   const app = new Hono<AppEnv>();
   const cache = 'public, max-age=300';
+  // Shorter cache for the human/agent entry points, so a testnet→mainnet flip is visible quickly.
+  const shortCache = 'public, max-age=60';
 
   const summary = {
     name: 'time2live',
@@ -49,6 +60,11 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
       mcpServerCard: `${base}/.well-known/mcp/server-card.json`,
       health: `${base}/healthz`,
       dashboard: `${base}/dashboard`,
+      terms: `${base}/terms`,
+      privacy: `${base}/privacy`,
+      status: `${base}/status`,
+      security: `${base}/.well-known/security.txt`,
+      x402: `${base}/.well-known/x402`,
     },
     x402,
     deadMansSwitchContract: onChain,
@@ -57,7 +73,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   // Content negotiation: browsers get the landing page, agents and curl keep the JSON summary.
   // The JSON at `/` is the discovery contract, so it must stay byte-for-byte for non-HTML clients.
   app.get('/', (c) => {
-    c.header('cache-control', cache);
+    c.header('cache-control', shortCache);
     if ((c.req.header('accept') ?? '').includes('text/html')) {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(landingHtml(base, net, onChain));
@@ -66,9 +82,90 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   });
 
   app.get('/llms.txt', (c) => {
-    c.header('cache-control', cache);
+    c.header('cache-control', shortCache);
     c.header('content-type', 'text/markdown; charset=utf-8');
     return c.body(llmsTxt(base, net, onChain));
+  });
+
+  // Trust & discoverability surfaces (reviewers and crawlers expect these).
+  app.get('/terms', (c) => {
+    c.header('cache-control', cache);
+    c.header('content-type', 'text/html; charset=utf-8');
+    return c.body(legalHtml(base, net, 'terms'));
+  });
+
+  app.get('/privacy', (c) => {
+    c.header('cache-control', cache);
+    c.header('content-type', 'text/html; charset=utf-8');
+    return c.body(legalHtml(base, net, 'privacy'));
+  });
+
+  app.get('/status', (c) => {
+    c.header('cache-control', shortCache);
+    c.header('content-type', 'text/html; charset=utf-8');
+    return c.body(statusHtml(base, net));
+  });
+
+  app.get('/robots.txt', (c) => {
+    c.header('cache-control', cache);
+    c.header('content-type', 'text/plain; charset=utf-8');
+    return c.body(
+      [
+        'User-agent: *',
+        'Allow: /',
+        'Disallow: /dashboard',
+        'Disallow: /analytics',
+        `Sitemap: ${base}/sitemap.xml`,
+        '',
+      ].join('\n'),
+    );
+  });
+
+  app.get('/sitemap.xml', (c) => {
+    c.header('cache-control', cache);
+    c.header('content-type', 'application/xml; charset=utf-8');
+    const urls = ['/', '/llms.txt', '/openapi.json', '/terms', '/privacy', '/status'];
+    const body =
+      '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+      urls.map((u) => `  <url><loc>${base}${u === '/' ? '/' : u}</loc></url>`).join('\n') +
+      '\n</urlset>\n';
+    return c.body(body);
+  });
+
+  app.get('/.well-known/security.txt', (c) => {
+    c.header('cache-control', cache);
+    c.header('content-type', 'text/plain; charset=utf-8');
+    // Expires: RFC 9116 requires a future expiry; one year out, refreshed on each request.
+    const expires = new Date(Date.now() + 365 * 86_400_000).toISOString();
+    return c.body(
+      [
+        `Contact: mailto:security@${host(base)}`,
+        `Expires: ${expires}`,
+        'Preferred-Languages: en, fi',
+        `Canonical: ${base}/.well-known/security.txt`,
+        `Policy: ${base}/terms`,
+        '',
+      ].join('\n'),
+    );
+  });
+
+  app.get('/.well-known/x402', (c) => {
+    c.header('cache-control', shortCache);
+    c.header('access-control-allow-origin', '*');
+    return c.json({
+      x402Version: 2,
+      ...x402,
+      payTo: deps.config.X402_PAY_TO ?? null,
+      facilitator: deps.config.X402_FACILITATOR_URL,
+      pricing: {
+        activation: usd(PRICES.activationMicro),
+        perRun: usd(PRICES.runMicro),
+        perMonitorMonth: usd(PRICES.monitorMonthMicro),
+        packs: PRICES.packs.map((p) => `$${p}`),
+      },
+      docs: `${base}/llms.txt`,
+    });
   });
 
   // Human operator dashboard: sign in with the wallet, view the fleet read-only, emergency stop.
@@ -146,7 +243,7 @@ function llmsTxt(
     ? `
 ## On-chain dead man's switch (Base, chain ${onChain.chainId})
 
-For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`. \`createSwitch(agent, beneficiary, ttl, tokens[], salt)\` (payable) deploys your own switch holding ETH and up to 20 ERC-20s. The agent or owner calls \`ping()\` at least every \`ttl\` seconds (1 h – 365 d); after the deadline anyone can call \`trigger()\` and everything goes to the beneficiary.${onChain.keeper ? ' Our keeper calls `trigger()` automatically.' : ''} Before the deadline only the owner can withdraw; after it, nobody can stop the transfer.
+For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`. \`createSwitch(agent, beneficiary, ttl, tokens[], salt)\` (payable) deploys your own switch holding ETH and up to 20 ERC-20s. The agent or owner calls \`ping()\` at least every \`ttl\` seconds (1 h – 365 d); after the deadline anyone can call \`trigger()\` and everything goes to the beneficiary.${onChain.keeper ? ' Our keeper calls `trigger()` automatically.' : ''} Before the deadline only the owner can withdraw; after it, nobody can stop the transfer. The beneficiary is fixed at creation and cannot be changed. **The contract is unaudited** — read the verified source on the block explorer before depositing.
 `
     : '';
   const free = TIERS.free;
@@ -159,13 +256,24 @@ For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`.
 
 Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`. Auth: \`Authorization: Bearer t2l_…\`. Every create call accepts \`Idempotency-Key\`.
 
+**Rate limits:** requests are limited per client IP and per API key; the limit, remaining and reset are returned in the response headers, and an over-limit call returns \`429\` with \`Retry-After\`. Auth endpoints have a tighter per-IP limit.
+
+**Sign-in chain:** \`chainId\` in the challenge is the EIP-4361 chain that binds the signature. It is **independent of the x402 payment network** — sign in with any accepted Base chain (8453 mainnet or 84532 Sepolia); payment always settles on this instance's configured network (see **Network** above).
+
 ## Quickstart (curl)
 
-1. \`POST /v1/auth/challenge\` \`{"address":"0x…","chainId":8453}\` → \`message\`
+1. \`POST /v1/auth/challenge\` \`{"address":"0x…","chainId":8453}\` → \`message\` (chainId: 8453 or 84532)
 2. Sign \`message\` verbatim with the wallet (EIP-191 personal_sign; smart wallets via ERC-1271/6492 work).
 3. \`POST /v1/auth/verify\` \`{"message","signature"}\` → \`apiKey.key\` (shown once).
 4. Heartbeat: \`POST /v1/monitors\` \`{"name":"agent-1","ttlSeconds":300}\` → \`pingUrl\`; then \`curl -fsS -X POST <pingUrl>\` more often than every 300 s. Missing pings → \`monitor.down\` alert.
 5. Job: \`POST /v1/jobs\` \`{"name":"wake","schedule":{"type":"cron","expression":"*/15 * * * *"},"target":{"url":"https://agent.example.com/wake"}}\`. Deliveries carry \`T2L-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "t.body">\`; the secret comes from \`GET /v1/account/webhook-secret\`.
+
+## Webhooks & signatures
+
+- Every delivery is signed: \`T2L-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "\${t}.\${rawBody}")>\`. Verify against the raw body, and **reject timestamps older than 5 minutes** to stop replays.
+- Get the secret with \`GET /v1/account/webhook-secret\`; rotate it with \`POST /v1/account/webhook-secret/rotate\` (effective immediately — the old secret stops validating).
+- Delivery is **at-least-once**: retried with exponential backoff on failure, so make your handler idempotent (each run has a stable id). Targets must be public HTTPS; redirects are not followed and private/loopback/metadata addresses are blocked, also after DNS resolution.
+- Lost or leaked an API key? \`POST /v1/account/keys/revoke-all\` cuts every key at once (the wallet operator session keeps working).
 
 ## MCP
 
@@ -219,6 +327,7 @@ function landingHtml(
         ERC-20s; after the deadline <strong>anyone</strong> can trigger it and everything goes to the
         beneficiary.</p>
         <p class="mono small">factory ${onChain.factory}<br>chain ${onChain.chainId}${onChain.keeper ? ' · keeper on' : ''}</p>
+        <p class="small dim">⚠ Unaudited — verified source on the explorer; review it before depositing.</p>
       </div>`
     : '';
 
@@ -230,6 +339,15 @@ function landingHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>time2live — TTL &amp; scheduling for AI agents</title>
 <meta name="description" content="Scheduling and liveness (TTL) service for autonomous AI agents: cron/one-off webhook jobs and heartbeat monitors (dead man's switch). Wallet sign-in, x402 payments, remote MCP server.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0e14'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%2335d07f'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="time2live">
+<meta property="og:title" content="time2live — TTL &amp; scheduling for AI agents">
+<meta property="og:description" content="Cron and one-off webhook jobs, heartbeat monitors (dead man's switch), and a non-custodial on-chain switch. Wallet sign-in, x402 payments, MCP.">
+<meta property="og:url" content="${base}/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="time2live — TTL &amp; scheduling for AI agents">
+<meta name="twitter:description" content="Scheduling and liveness for autonomous AI agents. Wallet sign-in, x402 payments, remote MCP server.">
 <style>
   :root {
     --bg: #0a0e14; --panel: #111823; --line: #1e2a3a; --fg: #d7e0ea; --dim: #7d8ea3;
@@ -840,4 +958,194 @@ if (getToken()) load().then(() => { if (!$('app').classList.contains('hide')) st
 </body>
 </html>
 `;
+}
+
+/** Shared <head> + base style for the simple text pages (terms, privacy, status). */
+function docShell(title: string, body: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0e14'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%2335d07f'/%3E%3C/svg%3E">
+<style>
+  :root{--bg:#0a0e14;--panel:#111823;--line:#1e2a3a;--fg:#d7e0ea;--dim:#7d8ea3;--accent:#35d07f;--amber:#f0b429;--red:#ff5c5c;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 var(--mono);-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  code{color:var(--amber);overflow-wrap:anywhere}
+  .wrap{max-width:760px;margin:0 auto;padding:0 clamp(16px,4vw,24px)}
+  header{padding:clamp(32px,8vw,56px) 0 20px;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;font-size:clamp(20px,5vw,26px);font-weight:600}
+  .pulse{width:11px;height:11px;border-radius:50%;background:var(--accent)}
+  h1{font-size:clamp(22px,5vw,28px);margin:28px 0 6px}
+  h2{font-size:15px;letter-spacing:.5px;color:var(--fg);margin:26px 0 8px}
+  p,li{color:var(--fg)}
+  .dim{color:var(--dim)}
+  ul{padding-left:20px}
+  section{padding:8px 0}
+  footer{padding:28px 0 56px;color:var(--dim);font-size:13px;display:flex;flex-wrap:wrap;gap:6px 18px;border-top:1px solid var(--line);margin-top:28px}
+  .note{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;color:var(--dim);font-size:13.5px}
+  .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;border:1px solid var(--line)}
+  .badge.live{color:var(--accent);border-color:var(--accent)}.badge.test{color:var(--amber);border-color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="wrap">
+${body}
+</div>
+</body>
+</html>
+`;
+}
+
+function docFooter(base: string): string {
+  return `<footer>
+  <a href="${base}/">home</a>
+  <a href="${base}/terms">terms</a>
+  <a href="${base}/privacy">privacy</a>
+  <a href="${base}/status">status</a>
+  <a href="${base}/llms.txt">llms.txt</a>
+  <a href="${base}/.well-known/security.txt">security.txt</a>
+</footer>`;
+}
+
+/** Terms of Service / Privacy — factual to how the service actually works. */
+function legalHtml(base: string, net: NetworkInfo, kind: 'terms' | 'privacy'): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const badge =
+    net.mode === 'live'
+      ? '<span class="badge live">● Live · Base mainnet</span>'
+      : net.mode === 'test'
+        ? `<span class="badge test">● Testnet · ${net.chain}</span>`
+        : '<span class="badge test">● Free / eval</span>';
+  const h = host(base);
+  const header = `<header>
+  <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live ${badge}</div>
+</header>`;
+
+  if (kind === 'terms') {
+    return docShell(
+      'time2live — Terms of Service',
+      `${header}
+<h1>Terms of Service</h1>
+<p class="dim">Last updated: ${today}</p>
+<section>
+<p>time2live ("the Service") provides scheduling (cron and one-off webhook jobs) and liveness
+monitoring (heartbeat "dead man's switch") for autonomous software agents, plus an optional
+non-custodial on-chain dead man's switch smart contract on Base. By using the Service you agree to
+these terms.</p>
+<h2>1. Accounts & access</h2>
+<p>There are no human accounts. Identity is an EVM wallet address proven by signature (EIP-4361).
+You are responsible for your private keys and API keys; anyone holding them controls your resources.
+Revoke keys any time with <code>POST /v1/account/keys/revoke-all</code>.</p>
+<h2>2. Payments</h2>
+<p>Paid actions are settled in USDC on Base via the x402 protocol. Prepaid credits and activations
+are non-refundable except where required by law. Prices are shown at <a href="${base}/">${h}</a> and
+may change for future purchases.</p>
+<h2>3. Acceptable use</h2>
+<p>Do not use the Service to attack, overload, or deliver unlawful content to third parties. Webhook
+targets must be systems you are authorised to call. We rate-limit and may suspend ("freeze")
+accounts that abuse the Service or its delivery targets.</p>
+<h2>4. On-chain contract</h2>
+<p>The on-chain dead man's switch is a non-custodial smart contract you deploy and control. It is
+<strong>unaudited</strong>. Transfers are irreversible, the beneficiary is fixed at creation, and
+after the deadline funds can only move to the beneficiary. You use it at your own risk; review the
+verified source before depositing. We never hold your funds or keys.</p>
+<h2>5. No warranty</h2>
+<p>The Service is provided "as is" and "as available", without warranties of any kind. Alerts and
+job delivery are best-effort; we do not guarantee uptime or that any alert or trigger will be
+delivered. Run your own independent monitoring for anything critical.</p>
+<h2>6. Limitation of liability</h2>
+<p>To the maximum extent permitted by law, the operator is not liable for any indirect, incidental,
+or consequential damages, or for lost funds, missed alerts, or failed deliveries. Total liability
+for the Service is limited to the amount you paid in the 30 days before the claim.</p>
+<h2>7. Changes & contact</h2>
+<p>We may update these terms; continued use means acceptance. Questions: <code>legal@${h}</code>.
+Security reports: <a href="${base}/.well-known/security.txt">security.txt</a>.</p>
+</section>
+<p class="note">This is a plain-language summary of how the Service works, not legal advice. Have
+your own counsel review it before relying on it in a specific jurisdiction.</p>
+${docFooter(base)}`,
+    );
+  }
+
+  return docShell(
+    'time2live — Privacy Policy',
+    `${header}
+<h1>Privacy Policy</h1>
+<p class="dim">Last updated: ${today}</p>
+<section>
+<p>time2live is built to need as little personal data as possible: there are no human accounts, and
+we never ask for your name, email, or payment card.</p>
+<h2>What we store</h2>
+<ul>
+<li>Your <strong>wallet address</strong> (the only identity) and hashes of your API keys.</li>
+<li>The resources you create: job and monitor configuration, webhook target URLs, schedules.</li>
+<li>Operational logs: job run and delivery history and alert outcomes, kept ~30 days.</li>
+<li>Payment records: on-chain transaction hashes and amounts (already public on Base).</li>
+<li>Optionally, a Telegram chat id if you link Telegram for alerts.</li>
+</ul>
+<h2>What we do not collect</h2>
+<p>No name, email, phone, address, or payment-card data. No advertising or analytics trackers. The
+operator dashboard and analytics pages use only in-browser <code>sessionStorage</code> for a
+short-lived sign-in token — no tracking cookies.</p>
+<h2>Third parties</h2>
+<p>To run the Service we send data to: your own webhook targets (job/alert deliveries), a blockchain
+RPC provider and the x402 payment facilitator (for payments and on-chain reads), and — only if you
+enable them — Telegram (alerts) and an email provider (alerts). We do not sell data.</p>
+<h2>Retention & your control</h2>
+<p>Delete jobs and monitors any time; run history ages out after ~30 days. Revoke all API keys with
+<code>POST /v1/account/keys/revoke-all</code>. On-chain data (payments, contract activity) is public
+and permanent and cannot be deleted by us.</p>
+<h2>Contact</h2>
+<p>Privacy questions: <code>privacy@${h}</code>.</p>
+</section>
+<p class="note">This describes current practice and is not legal advice; have counsel review it for
+your jurisdiction (e.g. GDPR/CCPA specifics).</p>
+${docFooter(base)}`,
+  );
+}
+
+/** Lightweight public status page: pings /healthz?deep=1 client-side. */
+function statusHtml(base: string, net: NetworkInfo): string {
+  const badge =
+    net.mode === 'live'
+      ? '<span class="badge live">● Live · Base mainnet</span>'
+      : net.mode === 'test'
+        ? `<span class="badge test">● Testnet · ${net.chain}</span>`
+        : '<span class="badge test">● Free / eval</span>';
+  return docShell(
+    'time2live — Status',
+    `<header>
+  <div class="brand"><span class="pulse" aria-hidden="true"></span>time2live ${badge}</div>
+</header>
+<h1>Service status</h1>
+<section>
+<p id="state" class="dim">Checking…</p>
+<p class="dim" id="detail"></p>
+<p class="dim">This page checks <code>${base}/healthz?deep=1</code> (API, database and a recent worker
+tick) live from your browser. For independent uptime history, use an external monitor.</p>
+</section>
+${docFooter(base)}
+<script>
+const BASE = ${JSON.stringify(base)};
+async function check() {
+  const state = document.getElementById('state'), detail = document.getElementById('detail');
+  try {
+    const res = await fetch(BASE + '/healthz?deep=1', { cache: 'no-store' });
+    const b = await res.json().catch(() => ({}));
+    if (res.ok) { state.textContent = '● All systems operational'; state.style.color = '#35d07f'; }
+    else { state.textContent = '● Degraded'; state.style.color = '#f0b429'; }
+    const checks = b && b.checks ? Object.entries(b.checks).map(([k,v]) => k + ': ' + (v.ok ? 'ok' : (v.detail || 'down'))).join(' · ') : '';
+    detail.textContent = (b.version ? 'version ' + b.version : '') + (checks ? ' — ' + checks : '');
+  } catch {
+    state.textContent = '● Unreachable'; state.style.color = '#ff5c5c';
+    detail.textContent = 'Could not reach the health endpoint.';
+  }
+}
+check(); setInterval(check, 15000);
+</script>`,
+  );
 }
