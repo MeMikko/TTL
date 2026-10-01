@@ -239,6 +239,8 @@ export function monitorRoutes(deps: AppDeps) {
         mode: body.mode,
         checkUrl: body.check?.url ?? null,
         checkIntervalSeconds: body.check?.intervalSeconds ?? null,
+        checkExpectStatus: body.check?.expect?.status ?? null,
+        checkBodyContains: body.check?.expect?.bodyContains ?? null,
         alertWebhookUrl: body.alerts.webhookUrl,
         alertWebhookUrl2: body.alerts.webhookUrl2,
         alertTelegram: body.alerts.telegram,

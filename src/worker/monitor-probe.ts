@@ -56,9 +56,23 @@ export async function probeActiveMonitors(
       body: null,
       timeoutMs: PROBE_TIMEOUT_MS,
     });
-    const ok =
-      !res.failure && typeof res.status === 'number' && res.status >= 200 && res.status < 300;
-    const detail = res.failure ? `${res.failure.kind}` : `HTTP ${res.status}`;
+    const statusOk =
+      !res.failure &&
+      typeof res.status === 'number' &&
+      (m.checkExpectStatus != null
+        ? res.status === m.checkExpectStatus
+        : res.status >= 200 && res.status < 300);
+    // Body assertion defeats a hollow 2xx from a front door that routes but does no real work.
+    const bodyOk =
+      !m.checkBodyContains || (res.responseSnippet ?? '').includes(m.checkBodyContains);
+    const ok = statusOk && bodyOk;
+    const detail = res.failure
+      ? `${res.failure.kind}`
+      : !statusOk
+        ? `HTTP ${res.status}`
+        : !bodyOk
+          ? `HTTP ${res.status} but body assertion failed`
+          : `HTTP ${res.status}`;
     // A successful probe is the ping; a failure is left to expire via the normal sweep.
     if (ok) up++;
     else down++;

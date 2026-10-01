@@ -306,6 +306,26 @@ export const CheckSchema = z
         description: 'How often we probe; must be shorter than ttlSeconds.',
         example: 60,
       }),
+    expect: z
+      .object({
+        status: z.number().int().min(100).max(599).nullable().default(null).openapi({
+          description: 'Required exact status; null = any 2xx.',
+        }),
+        bodyContains: z
+          .string()
+          .min(1)
+          .max(512)
+          .nullable()
+          .default(null)
+          .openapi({
+            description:
+              'The response body must contain this substring (first ~4 KB), so a hollow 2xx from a ' +
+              'front door that routes but does no real work fails the check.',
+            example: '"db":"ok"',
+          }),
+      })
+      .default({ status: null, bodyContains: null })
+      .openapi({ description: 'Optional response assertions beyond a 2xx.' }),
   })
   .openapi('Check');
 
@@ -383,7 +403,14 @@ export const MonitorSchema = z
     graceSeconds: z.number().int(),
     mode: z.enum(['heartbeat', 'active']),
     check: z
-      .object({ url: z.string(), intervalSeconds: z.number().int() })
+      .object({
+        url: z.string(),
+        intervalSeconds: z.number().int(),
+        expect: z.object({
+          status: z.number().int().nullable(),
+          bodyContains: z.string().nullable(),
+        }),
+      })
       .nullable()
       .openapi({ description: 'The active-check configuration, or null for a heartbeat monitor.' }),
     lastProbe: z

@@ -91,6 +91,8 @@ export interface MonitorReceiptInput {
     lastProbeAt: Date | null;
     lastProbeOk: boolean | null;
     lastProbeDetail: string | null;
+    checkExpectStatus: number | null;
+    checkBodyContains: string | null;
   };
   lastEvent: { toStatus: string; reason: string; at: Date } | null;
   ownerAddress: string;
@@ -141,6 +143,11 @@ export function buildMonitorReceipt(input: MonitorReceiptInput) {
         ? {
             url: m.checkUrl,
             intervalSeconds: m.checkIntervalSeconds,
+            // The assertion that must pass for a probe to count — not just that the door opened.
+            expect: {
+              status: m.checkExpectStatus,
+              bodyContains: m.checkBodyContains,
+            },
             lastProbeAt: m.lastProbeAt ? m.lastProbeAt.toISOString() : null,
             lastProbeOk: m.lastProbeOk,
             lastProbeDetail: m.lastProbeDetail,
