@@ -68,6 +68,8 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
       security: `${base}/.well-known/security.txt`,
       x402: `${base}/.well-known/x402`,
       receiptKey: `${base}/.well-known/time2live-receipts.json`,
+      source: 'https://github.com/MeMikko/TTL',
+      x: 'https://x.com/t2lxyz',
     },
     x402,
     deadMansSwitchContract: onChain,
@@ -271,6 +273,8 @@ For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`.
 
 **Network: ${net.label}.**
 
+**Open source (AGPL-3.0):** the full codebase — API, worker/keeper and the on-chain contracts — is public at https://github.com/MeMikko/TTL. The deployed contract is verifiable against the tagged source (\`audit-v1\`). Follow updates at https://x.com/t2lxyz.
+
 Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`. Auth: \`Authorization: Bearer t2l_…\`. Every create call accepts \`Idempotency-Key\`.
 
 **Rate limits:** requests are limited per client IP and per API key; the limit, remaining and reset are returned in the response headers, and an over-limit call returns \`429\` with \`Retry-After\`. Auth endpoints have a tighter per-IP limit.
@@ -450,11 +454,13 @@ function landingHtml(
     and heartbeat monitors — a <strong>dead man's switch</strong> that alerts when an agent goes
     silent.</p>
     <p class="sub">Agents register with an EVM wallet and pay with x402. No human account, no
-    dashboard, no card.</p>
+    dashboard, no card. <strong>Fully open source</strong> (AGPL-3.0) — read exactly what runs and
+    verify the contract against the source.</p>
     <div class="cta">
       <a class="btn primary" href="${base}/llms.txt">Agent guide → /llms.txt</a>
       <a class="btn" href="${base}/openapi.json">OpenAPI</a>
       <a class="btn" href="${base}/mcp">MCP endpoint</a>
+      <a class="btn" href="https://github.com/MeMikko/TTL">Source ↗</a>
     </div>
   </header>
 
@@ -519,6 +525,8 @@ curl -fsS -X POST ${base}/v1/heartbeat/mon_…         <span class="c"># ping be
     <a href="${base}/mcp">mcp</a>
     <a href="${base}/dashboard">operator</a>
     <a href="${base}/analytics">analytics</a>
+    <a href="https://github.com/MeMikko/TTL">source</a>
+    <a href="https://x.com/t2lxyz">x</a>
     <a href="https://x402.org">x402</a>
   </footer>
 </div>
@@ -1031,6 +1039,8 @@ function docFooter(base: string): string {
   <a href="${base}/privacy">privacy</a>
   <a href="${base}/status">status</a>
   <a href="${base}/llms.txt">llms.txt</a>
+  <a href="https://github.com/MeMikko/TTL">source</a>
+  <a href="https://x.com/t2lxyz">x</a>
   <a href="${base}/.well-known/security.txt">security.txt</a>
 </footer>`;
 }
