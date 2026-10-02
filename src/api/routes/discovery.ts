@@ -273,7 +273,7 @@ For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`.
 
 **Network: ${net.label}.**
 
-**Open source (AGPL-3.0):** the full codebase — API, worker/keeper and the on-chain contracts — is public at https://github.com/MeMikko/TTL. The deployed contract is verifiable against the tagged source (\`audit-v1\`). Follow updates at https://x.com/t2lxyz.
+**Open source (AGPL-3.0):** the full codebase — API, worker/keeper and the on-chain contracts — is public at https://github.com/MeMikko/TTL. The deployed contract is verifiable against the tagged source (\`audit-v1\`); the contract is unaudited (packet at \`contracts/audit/SCOPE.md\`, auditor being engaged). Self-host or run a Base Sepolia testnet instance from \`docs/OPERATIONS.md\` (§8d). Follow updates at https://x.com/t2lxyz.
 
 Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`. Auth: \`Authorization: Bearer t2l_…\`. Every create call accepts \`Idempotency-Key\`.
 

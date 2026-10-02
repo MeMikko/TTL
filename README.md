@@ -191,6 +191,12 @@ The worker's **keeper** discovers switches from factory events and triggers expi
 `docs/OPERATIONS.md` §8c). Once configured, `GET /` and `/llms.txt` advertise the factory
 address. Details: [`contracts/README.md`](contracts/README.md).
 
+**Audit status: unaudited.** An internal review fixed one High and one Medium (zero outstanding
+critical/high), but that is not a third-party audit. A self-contained audit packet is at
+[`contracts/audit/SCOPE.md`](contracts/audit/SCOPE.md); the audit target is tag `audit-v1`, which
+matches the verified bytecode of the live mainnet factory. We are engaging an external auditor and
+will publish the report here — until then, don't deposit more than you'd be willing to lose.
+
 ## MCP server and discovery
 
 `POST /mcp` is a remote MCP server (Streamable HTTP, stateless, JSON responses). Tools:
@@ -245,6 +251,13 @@ secrets. [docs/OPERATIONS.md](docs/OPERATIONS.md) is the authoritative runbook; 
   uptime check. Enabling x402 (§8b) and the on-chain keeper (§8c) is optional and off by default.
 
 Secrets live only in `/opt/time2live/.env` on the server, never in the repo.
+
+**Reliability (current posture):** the service runs on a single node — there is no high-availability
+layer yet, so the recovery path for a host failure is restore-from-backup (OPERATIONS §6), with an
+RPO of one night and an RTO bounded by reprovision + restore. This affects off-chain scheduling and
+heartbeats only: **on-chain switch liveness does not depend on our node** — `trigger()` is
+permissionless and reward-incentivised (above), so a funded switch still fires if our keeper is
+down. HA and a hosted public testnet are on the roadmap, not done.
 
 ## Admin
 
