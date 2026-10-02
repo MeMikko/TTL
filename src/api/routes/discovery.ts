@@ -260,7 +260,7 @@ function llmsTxt(
     ? `
 ## On-chain dead man's switch (Base, chain ${onChain.chainId})
 
-For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`. \`createSwitch(agent, beneficiary, ttl, tokens[], salt)\` (payable) deploys your own switch holding ETH and up to 20 ERC-20s. The agent or owner calls \`ping()\` at least every \`ttl\` seconds (1 h – 365 d); after the deadline anyone can call \`trigger()\` and everything goes to the beneficiary.${onChain.keeper ? ' Our keeper calls `trigger()` automatically.' : ''} Before the deadline only the owner can withdraw; after it, nobody can stop the transfer. The beneficiary is fixed at creation and cannot be changed. **The contract is unaudited** — read the verified source on the block explorer before depositing.
+For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`. \`createSwitch(agent, beneficiary, ttl, tokens[], salt)\` (payable) deploys your own switch holding ETH and up to 20 ERC-20s. The agent or owner calls \`ping()\` at least every \`ttl\` seconds (1 h – 365 d); after the deadline anyone can call \`trigger()\` and everything goes to the beneficiary.${onChain.keeper ? ' Our keeper calls `trigger()` automatically.' : ''} Before the deadline only the owner can withdraw; after it, nobody can stop the transfer. The owner can change the beneficiary while the switch is live; once the deadline passes it is locked. **The contract is unaudited** — read the verified source on the block explorer before depositing.
 `
     : '';
   const free = TIERS.free;
@@ -367,7 +367,7 @@ function landingHtml(
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="time2live">
 <meta property="og:title" content="time2live — TTL &amp; scheduling for AI agents">
-<meta property="og:description" content="Cron and one-off webhook jobs, heartbeat monitors (dead man's switch), and a non-custodial on-chain switch. Wallet sign-in, x402 payments, MCP.">
+<meta property="og:description" content="Cron and one-off webhook jobs, heartbeat monitors (dead man's switch), and an on-chain switch. Wallet sign-in, x402 payments, MCP.">
 <meta property="og:url" content="${base}/">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="time2live — TTL &amp; scheduling for AI agents">
@@ -1058,8 +1058,8 @@ function legalHtml(base: string, net: NetworkInfo, kind: 'terms' | 'privacy'): s
 <section>
 <p>time2live ("the Service") provides scheduling (cron and one-off webhook jobs) and liveness
 monitoring (heartbeat "dead man's switch") for autonomous software agents, plus an optional
-non-custodial on-chain dead man's switch smart contract on Base. By using the Service you agree to
-these terms.</p>
+on-chain dead man's switch smart contract on Base (which you deploy and control; time2live has no
+admin key over it). By using the Service you agree to these terms.</p>
 <h2>1. Accounts & access</h2>
 <p>There are no human accounts. Identity is an EVM wallet address proven by signature (EIP-4361).
 You are responsible for your private keys and API keys; anyone holding them controls your resources.
@@ -1073,10 +1073,12 @@ may change for future purchases.</p>
 targets must be systems you are authorised to call. We rate-limit and may suspend ("freeze")
 accounts that abuse the Service or its delivery targets.</p>
 <h2>4. On-chain contract</h2>
-<p>The on-chain dead man's switch is a non-custodial smart contract you deploy and control. It is
-<strong>unaudited</strong>. Transfers are irreversible, the beneficiary is fixed at creation, and
-after the deadline funds can only move to the beneficiary. You use it at your own risk; review the
-verified source before depositing. We never hold your funds or keys.</p>
+<p>The on-chain dead man's switch is a smart contract you deploy and control; time2live has no admin
+key and cannot withdraw or freeze its funds. It is <strong>unaudited</strong>. Transfers are
+irreversible; the owner can change the beneficiary while the switch is live but not after the
+deadline, and after the deadline funds move only to the beneficiary (less any trigger reward you
+set). You use it at your own risk; review the verified source before depositing. We never hold your
+funds or keys.</p>
 <h2>5. No warranty</h2>
 <p>The Service is provided "as is" and "as available", without warranties of any kind. Alerts and
 job delivery are best-effort; we do not guarantee uptime or that any alert or trigger will be
