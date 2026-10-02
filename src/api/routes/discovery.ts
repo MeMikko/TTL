@@ -41,6 +41,10 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
       }
     : null;
   const net = networkInfo(deps.config);
+  const sandbox = deps.config.SANDBOX;
+  const sandboxTtlDays = Math.round(deps.config.SANDBOX_DATA_TTL_HOURS / 24);
+  const sandboxNote = `Sandbox: a public testnet instance for development only — no uptime guarantee, and all data is wiped on a rolling ${sandboxTtlDays}-day TTL. Do not use for production workloads.`;
+  const sandboxArg: SandboxInfo = sandbox ? { note: sandboxNote, ttlDays: sandboxTtlDays } : null;
   const receiptSigner = createReceiptSigner(deps.config.ENCRYPTION_KEY);
   const app = new Hono<AppEnv>();
   const cache = 'public, max-age=300';
@@ -55,6 +59,8 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
     version: VERSION,
     // Prominent trust signal: is this a live (real-money) or a testnet deployment?
     network: { mode: net.mode, label: net.label, chain: net.chain },
+    // A sandbox is a public testnet instance with a rolling data wipe — never production.
+    sandbox: sandbox ? { enabled: true, dataTtlDays: sandboxTtlDays, note: sandboxNote } : false,
     links: {
       openapi: `${base}/openapi.json`,
       llms: `${base}/llms.txt`,
@@ -81,7 +87,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
     c.header('cache-control', shortCache);
     if ((c.req.header('accept') ?? '').includes('text/html')) {
       c.header('content-type', 'text/html; charset=utf-8');
-      return c.body(landingHtml(base, net, onChain));
+      return c.body(landingHtml(base, net, onChain, sandboxArg));
     }
     return c.json(summary);
   });
@@ -89,7 +95,7 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   app.get('/llms.txt', (c) => {
     c.header('cache-control', shortCache);
     c.header('content-type', 'text/markdown; charset=utf-8');
-    return c.body(llmsTxt(base, net, onChain));
+    return c.body(llmsTxt(base, net, onChain, sandboxArg));
   });
 
   // Trust & discoverability surfaces (reviewers and crawlers expect these).
@@ -252,10 +258,13 @@ export function discoveryRoutes(deps: AppDeps, listTools: () => Promise<ToolList
   return app;
 }
 
+type SandboxInfo = { note: string; ttlDays: number } | null;
+
 function llmsTxt(
   base: string,
   net: NetworkInfo,
   onChain: { chainId: number; factory: string; keeper: boolean } | null,
+  sandbox: SandboxInfo,
 ): string {
   const network = net.x402Network;
   const contract = onChain
@@ -272,7 +281,7 @@ For funds, not just alerts: \`DeadMansSwitchFactory\` at \`${onChain.factory}\`.
 > Scheduling and liveness (TTL) service for autonomous AI agents. Cron or one-off HTTP webhook jobs (signed, retried) and heartbeat monitors — a dead man's switch that alerts by webhook or Telegram when an agent stops pinging. Agents register with an EVM wallet and pay with x402 (USDC on Base); no human account needed.
 
 **Network: ${net.label}.**
-
+${sandbox ? `\n**⚠ Sandbox.** ${sandbox.note} Payments use testnet USDC, so the x402 path works end to end but costs nothing real.\n` : ''}
 **Open source (AGPL-3.0):** the full codebase — API, worker/keeper and the on-chain contracts — is public at https://github.com/MeMikko/TTL. The deployed contract is verifiable against the tagged source (\`audit-v1\`); the contract is unaudited (packet at \`contracts/audit/SCOPE.md\`, auditor being engaged). Self-host or run a Base Sepolia testnet instance from \`docs/OPERATIONS.md\` (§8d). Follow updates at https://x.com/t2lxyz.
 
 Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`. Auth: \`Authorization: Bearer t2l_…\`. Every create call accepts \`Idempotency-Key\`.
@@ -333,6 +342,7 @@ function landingHtml(
   base: string,
   net: NetworkInfo,
   onChain: { chainId: number; factory: string; keeper: boolean } | null,
+  sandbox: SandboxInfo,
 ): string {
   const activation = usd(PRICES.activationMicro);
   const run = usd(PRICES.runMicro);
@@ -457,6 +467,7 @@ function landingHtml(
     <p class="sub">Agents register with an EVM wallet and pay with x402. No human account, no
     dashboard, no card. <strong>Fully open source</strong> (AGPL-3.0) — read exactly what runs and
     verify the contract against the source.</p>
+    ${sandbox ? `<p class="sub"><strong>⚠ Sandbox (testnet).</strong> ${sandbox.note}</p>` : ''}
     <div class="cta">
       <a class="btn primary" href="${base}/llms.txt">Agent guide → /llms.txt</a>
       <a class="btn" href="${base}/openapi.json">OpenAPI</a>
