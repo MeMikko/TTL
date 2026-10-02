@@ -74,6 +74,11 @@ curl -X POST http://localhost:3000/v1/jobs -H "Authorization: Bearer $T2L_KEY" \
 
 - Schedules: 5-field cron (+ `@hourly`/`@daily`/…, minimum interval 1 min) with an IANA
   timezone, or `{"type":"once","at":"<ISO time>"}`.
+- After downtime, missed occurrences are **collapsed into a single catch-up run** (the schedule
+  then jumps to the next future slot) — never a replayed backlog. Add `"freshnessSeconds": N`
+  (60 … 31536000) to drop even that catch-up when its slot is older than `N` seconds: the run is
+  recorded `skipped` (not delivered, not charged). Omit it to deliver regardless of lateness.
+  Clients can also gate on the `T2L-Scheduled-For` header.
 - Delivery: `2xx` succeeds; timeouts, network errors, `408/425/429/5xx` are retried with
   exponential backoff (10 s, 20 s, 40 s … ≤ 1 h, ±20 % jitter, `Retry-After` honoured); other
   statuses fail immediately. Every attempt is logged (`GET /v1/runs/{id}`); history is kept 30 days.

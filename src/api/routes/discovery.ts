@@ -293,7 +293,8 @@ Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`.
 
 - Every delivery is signed: \`T2L-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "\${t}.\${rawBody}")>\`. Verify against the raw body, and **reject timestamps older than 5 minutes** to stop replays.
 - Get the secret with \`GET /v1/account/webhook-secret\`; rotate it with \`POST /v1/account/webhook-secret/rotate\` (effective immediately — the old secret stops validating).
-- Delivery is **at-least-once**: retried with exponential backoff on failure, so make your handler idempotent (each run has a stable id). Targets must be public HTTPS; redirects are not followed and private/loopback/metadata addresses are blocked, also after DNS resolution.
+- Delivery is **at-least-once**: retried with exponential backoff on failure, so make your handler idempotent (each run has a stable id). Every delivery carries \`T2L-Delivery-Id\` (stable across retries — dedupe on it), \`T2L-Attempt\`, and \`T2L-Scheduled-For\` (the slot's ISO time). Targets must be public HTTPS; redirects are not followed and private/loopback/metadata addresses are blocked, also after DNS resolution.
+- **Missed slots after downtime are collapsed, not replayed:** at most one catch-up run per job fires, then the schedule jumps to the next future slot — never a backlog burst. Set \`freshnessSeconds\` on a job to drop even that one catch-up when its slot is older than the cutoff (recorded \`skipped\`, not delivered); omit it to deliver regardless of lateness. You can also gate client-side on \`T2L-Scheduled-For\`.
 - Lost or leaked an API key? \`POST /v1/account/keys/revoke-all\` cuts every key at once (the wallet operator session keeps working).
 
 ## Liveness receipts

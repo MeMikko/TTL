@@ -31,6 +31,8 @@ export interface JobInput {
   target: TargetInput;
   timeoutMs: number;
   maxAttempts: number;
+  /** Freshness cutoff in seconds; null/undefined means deliver regardless of lateness. */
+  freshnessSeconds?: number | null;
 }
 
 export interface JobPatch {
@@ -39,6 +41,7 @@ export interface JobPatch {
   target?: Partial<TargetInput>;
   timeoutMs?: number;
   maxAttempts?: number;
+  freshnessSeconds?: number | null;
 }
 
 export interface JobsDeps {
@@ -140,6 +143,7 @@ export async function createJob(
       body: input.target.body,
       timeoutMs: input.timeoutMs,
       maxAttempts: input.maxAttempts,
+      freshnessSeconds: input.freshnessSeconds ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -168,6 +172,7 @@ export async function updateJob(
   if (patch.name !== undefined) set.name = patch.name;
   if (patch.timeoutMs !== undefined) set.timeoutMs = patch.timeoutMs;
   if (patch.maxAttempts !== undefined) set.maxAttempts = patch.maxAttempts;
+  if (patch.freshnessSeconds !== undefined) set.freshnessSeconds = patch.freshnessSeconds;
   if (patch.schedule) {
     const next = firstRun(patch.schedule, now);
     Object.assign(set, scheduleColumns(patch.schedule));

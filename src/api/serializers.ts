@@ -27,6 +27,7 @@ export function serializeJob(j: Job, headers: Record<string, string>) {
     },
     timeoutMs: j.timeoutMs,
     maxAttempts: j.maxAttempts,
+    freshnessSeconds: j.freshnessSeconds,
     nextRunAt: iso(j.nextRunAt),
     lastRunAt: iso(j.lastRunAt),
     lastRunStatus: j.lastRunStatus,

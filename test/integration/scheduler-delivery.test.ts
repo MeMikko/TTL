@@ -146,6 +146,34 @@ describe('scheduler', () => {
     });
   });
 
+  it('skips a stale catch-up past the freshness cutoff, delivers a fresh slot', async () => {
+    // freshnessSeconds=120: a slot more than two minutes late is dropped, not delivered.
+    const job = await createJob(jobsDeps, account, input({ freshnessSeconds: 120 }), T0);
+    expect(job.freshnessSeconds).toBe(120);
+
+    // After long downtime the scheduler wakes at 62 min; the first slot (5 min) is ~57 min late,
+    // beyond the cutoff → recorded skipped, nothing delivered, nothing charged.
+    expect(await scheduleDueJobs(db, at(62 * 60_000))).toEqual({ queued: 0, skipped: 1 });
+    const [stale] = await runsOf(job.id);
+    expect(stale).toMatchObject({ status: 'skipped', scheduledFor: at(5 * 60_000) });
+    expect(stale!.lastError).toMatch(/^stale: scheduled \d+s ago, beyond freshnessSeconds=120$/);
+    // The schedule still advances to the next future slot.
+    expect((await jobById(job.id)).nextRunAt).toEqual(at(65 * 60_000));
+
+    // The next on-time slot delivers normally.
+    expect(await scheduleDueJobs(db, at(65 * 60_000))).toEqual({ queued: 1, skipped: 0 });
+    expect((await runsOf(job.id)).find((r) => r.status === 'pending')).toMatchObject({
+      scheduledFor: at(65 * 60_000),
+    });
+  });
+
+  it('without a cutoff a stale catch-up is still delivered (default behaviour)', async () => {
+    const job = await createJob(jobsDeps, account, input(), T0);
+    expect(job.freshnessSeconds).toBeNull();
+    expect(await scheduleDueJobs(db, at(62 * 60_000))).toEqual({ queued: 1, skipped: 0 });
+    expect((await runsOf(job.id))[0]).toMatchObject({ status: 'pending' });
+  });
+
   it('does not create runs for frozen accounts but keeps the schedule moving', async () => {
     const job = await createJob(jobsDeps, account, input(), T0);
     await freezeAccount(db, account.id, 'test');
