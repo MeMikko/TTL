@@ -78,6 +78,13 @@
       "when": 1790942293029,
       "tag": "0010_job_freshness_seconds",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790952339290,
+      "tag": "0011_monitor_freshness_check",
+      "breakpoints": true
     }
   ]
 }

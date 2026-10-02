@@ -76,6 +76,18 @@ const envSchema = z
     SCHEDULER_POLL_MS: z.coerce.number().int().min(100).default(1000),
     MAX_JOBS_PER_ACCOUNT: z.coerce.number().int().min(1).default(100),
 
+    /**
+     * Sandbox mode: a public testnet instance that is deliberately unfit for real workloads.
+     * It is labelled as a sandbox everywhere and its data is wiped on a rolling TTL
+     * (SANDBOX_DATA_TTL_HOURS) so it can't be used as a free production service. x402 stays on
+     * (testnet USDC), so the payment path is still exercised end to end.
+     */
+    SANDBOX: z.stringbool().default(false),
+    /** Rolling wipe for a sandbox: accounts (and all their data, by cascade) older than this go. */
+    SANDBOX_DATA_TTL_HOURS: z.coerce.number().int().min(1).default(168),
+    /** History retention (finished runs, monitor events, alert deliveries) in days. */
+    HISTORY_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+
     /** Pings per monitor per minute (pings are unauthenticated; the id is the capability). */
     RATE_LIMIT_PING_PER_MIN: z.coerce.number().int().min(1).default(60),
 

@@ -540,3 +540,38 @@ contract.
 Use WSL (recommended) or Git Bash for the `.sh` scripts; `deploy\deploy.ps1` works in plain
 PowerShell with the built-in OpenSSH client. `.gitattributes` forces LF endings for `*.sh`, so
 scripts stay runnable even when the repository is checked out on Windows.
+
+## 11. Sandbox instance (full-time testnet)
+
+A permanent public **sandbox** on `testnet.time2live.xyz` lets agent developers integrate against
+the real API — including the x402 payment path — without risking real USDC. It is a **second
+Compose stack on the same host** as production, pointed at Base Sepolia, with `SANDBOX=true`.
+
+Guardrails (keep it a sandbox, not a free production backend):
+
+- **`SANDBOX=true`** labels every surface (`/`, `/llms.txt`, landing, terms) as a sandbox and
+  surfaces the rolling-wipe policy.
+- **Rolling wipe:** the worker deletes whole accounts (and all their data, by cascade) older than
+  `SANDBOX_DATA_TTL_HOURS` (default 168 = 7 days). Nobody can run real workloads on something that
+  resets weekly. `HISTORY_RETENTION_DAYS` is shorter too (7).
+- **Tighter quotas** via env (`MAX_JOBS_PER_ACCOUNT`, `RATE_LIMIT_*`).
+- **x402 stays ON** with the free public facilitator and testnet USDC, so the payment path is
+  exercised end to end at no real cost (no CDP key needed on testnet).
+
+Setup:
+
+1. **Contract:** deploy the current (`audit-v1`) factory to Base Sepolia (§8a / §8d) and note its
+   address — the pre-existing Sepolia factory is older bytecode. Put the new address in
+   `KEEPER_FACTORY_ADDRESS`.
+2. **Env:** copy `deploy/.env.sandbox.example` to `/opt/time2live-sandbox/.env`, fill
+   `POSTGRES_PASSWORD`, `ENCRYPTION_KEY` (distinct from production), `X402_PAY_TO`, and a
+   faucet-funded `KEEPER_PRIVATE_KEY`.
+3. **Stack:** run it as a separate Compose project with its own volume and an env-file override,
+   e.g. `docker compose -p t2l-sandbox --env-file /opt/time2live-sandbox/.env --profile app up -d`.
+   Keep its Postgres unpublished, same as production.
+4. **DNS + TLS:** point `testnet.time2live.xyz` at the host; Caddy issues the certificate
+   automatically (`DOMAIN`/`PUBLIC_BASE_URL` in the sandbox env).
+5. **Keeper gas:** top up the Sepolia keeper wallet from a faucet when it runs low (free).
+
+Because it shares the host, the sandbox shares production's single-node failure domain — acceptable
+for a no-SLA testnet. The rolling wipe keeps its database small.

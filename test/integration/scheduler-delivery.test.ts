@@ -382,6 +382,40 @@ describe('retention', () => {
     expect((await runsOf(job.id)).map((r) => r.status)).toEqual(['pending']);
     expect(await db.select().from(schema.jobAttempts)).toHaveLength(0);
   });
+
+  it('a shorter configurable retention window removes finished runs sooner', async () => {
+    const job = await createJob(jobsDeps, account, input(), T0);
+    await triggerJob(db, account, job.id, T0);
+    await deliverAll(T0);
+    // 10 days later: default (30 d) keeps it, a 7-day window removes it.
+    expect((await cleanupExpired(db, at(10 * 24 * 3600_000))).jobRuns).toBe(0);
+    const removed = await cleanupExpired(db, at(10 * 24 * 3600_000), {
+      historyRetentionMs: 7 * 24 * 3600_000,
+    });
+    expect(removed.jobRuns).toBe(1);
+  });
+});
+
+describe('sandbox rolling wipe', () => {
+  const accountExists = async (id: string) =>
+    (await db.select().from(schema.accounts).where(eq(schema.accounts.id, id))).length === 1;
+
+  it('wipes whole accounts past the TTL (cascade), and is a no-op without the option', async () => {
+    const job = await createJob(jobsDeps, account, input(), T0);
+    await triggerJob(db, account, job.id, T0);
+    // The account's createdAt is ~now (findOrCreateAccount), so look 8 days ahead.
+    const future = new Date(Date.now() + 8 * 24 * 3600_000);
+
+    // No sandbox option → the account survives.
+    expect((await cleanupExpired(db, future)).sandboxAccounts).toBe(0);
+    expect(await accountExists(account.id)).toBe(true);
+
+    // A 7-day sandbox TTL → the ~8-day-old account and all its data cascade away.
+    const res = await cleanupExpired(db, future, { sandboxDataTtlMs: 7 * 24 * 3600_000 });
+    expect(res.sandboxAccounts).toBe(1);
+    expect(await accountExists(account.id)).toBe(false);
+    expect(await runsOf(job.id)).toHaveLength(0); // cascaded
+  });
 });
 
 describe('worker process', () => {

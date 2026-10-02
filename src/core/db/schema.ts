@@ -281,6 +281,11 @@ export const monitors = pgTable(
     /** Active mode: the response body must contain this substring (null = no body assertion), so a
      * hollow 200 from a closed-but-routing front door fails. Matched against the first ~4 KB. */
     checkBodyContains: text('check_body_contains'),
+    /** Active mode: dotted JSON path to a timestamp field (null = no freshness check). Paired with
+     * checkMaxAgeSeconds, it fails a stale-but-correct 200 whose body still contains the marker. */
+    checkJsonPath: text('check_json_path'),
+    /** Active mode: max age (seconds) for the checkJsonPath timestamp relative to the probe. */
+    checkMaxAgeSeconds: integer('check_max_age_seconds'),
     /** Active mode: when we last probed, and the outcome (for the UI and the liveness receipt). */
     lastProbeAt: ts('last_probe_at'),
     lastProbeOk: boolean('last_probe_ok'),

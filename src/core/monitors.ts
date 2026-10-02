@@ -41,6 +41,10 @@ export interface MonitorInput {
   checkExpectStatus?: number | null;
   /** Active mode: the response body must contain this substring (defeats a hollow 200). */
   checkBodyContains?: string | null;
+  /** Active mode: dotted JSON path to a timestamp field; with checkMaxAgeSeconds, defeats a stale 200. */
+  checkJsonPath?: string | null;
+  /** Active mode: max age (seconds) for the checkJsonPath timestamp relative to the probe. */
+  checkMaxAgeSeconds?: number | null;
 }
 
 export type MonitorEventName = 'monitor.down' | 'monitor.up' | 'monitor.unpaid';
@@ -165,8 +169,14 @@ export async function createMonitor(
     : null;
   const alertEmail = requireEmailConfigured(deps, input.alertEmail);
   const mode = input.mode ?? 'heartbeat';
-  const { checkUrl, checkIntervalSeconds, checkExpectStatus, checkBodyContains } =
-    await validateActiveCheck(deps, mode, input);
+  const {
+    checkUrl,
+    checkIntervalSeconds,
+    checkExpectStatus,
+    checkBodyContains,
+    checkJsonPath,
+    checkMaxAgeSeconds,
+  } = await validateActiveCheck(deps, mode, input);
   const limit = TIERS[tierFor(account)].monitors;
   return deps.db.transaction(async (tx) => {
     // Serialise per account so two concurrent creates cannot both take the last free slot.
@@ -206,6 +216,8 @@ export async function createMonitor(
         checkIntervalSeconds,
         checkExpectStatus,
         checkBodyContains,
+        checkJsonPath,
+        checkMaxAgeSeconds,
         alertWebhookUrl,
         alertWebhookUrl2,
         alertTelegram: input.alertTelegram,
@@ -230,20 +242,30 @@ async function validateActiveCheck(
   mode: 'heartbeat' | 'active',
   input: Pick<
     MonitorInput,
-    'checkUrl' | 'checkIntervalSeconds' | 'ttlSeconds' | 'checkExpectStatus' | 'checkBodyContains'
+    | 'checkUrl'
+    | 'checkIntervalSeconds'
+    | 'ttlSeconds'
+    | 'checkExpectStatus'
+    | 'checkBodyContains'
+    | 'checkJsonPath'
+    | 'checkMaxAgeSeconds'
   >,
 ): Promise<{
   checkUrl: string | null;
   checkIntervalSeconds: number | null;
   checkExpectStatus: number | null;
   checkBodyContains: string | null;
+  checkJsonPath: string | null;
+  checkMaxAgeSeconds: number | null;
 }> {
   if (mode === 'heartbeat') {
     if (
       input.checkUrl ||
       input.checkIntervalSeconds != null ||
       input.checkExpectStatus != null ||
-      input.checkBodyContains
+      input.checkBodyContains ||
+      input.checkJsonPath ||
+      input.checkMaxAgeSeconds != null
     ) {
       throw new ApiError(400, 'invalid_request', 'check/expect fields require mode "active"');
     }
@@ -252,6 +274,8 @@ async function validateActiveCheck(
       checkIntervalSeconds: null,
       checkExpectStatus: null,
       checkBodyContains: null,
+      checkJsonPath: null,
+      checkMaxAgeSeconds: null,
     };
   }
   if (!input.checkUrl)
@@ -271,12 +295,27 @@ async function validateActiveCheck(
   if (status != null && (status < 100 || status > 599)) {
     throw new ApiError(400, 'invalid_request', 'check.expect.status must be a valid HTTP status');
   }
+  // Freshness assertion: jsonPath and maxAgeSeconds go together, or neither.
+  const jsonPath = input.checkJsonPath?.trim() || null;
+  const maxAge = input.checkMaxAgeSeconds ?? null;
+  if ((jsonPath === null) !== (maxAge === null)) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'check.expect.jsonPath and maxAgeSeconds must be set together',
+    );
+  }
+  if (maxAge != null && maxAge < 1) {
+    throw new ApiError(400, 'invalid_request', 'check.expect.maxAgeSeconds must be at least 1');
+  }
   const checkUrl = await assertWebhookUrl(deps.policy, input.checkUrl, deps.resolve);
   return {
     checkUrl,
     checkIntervalSeconds: interval,
     checkExpectStatus: status ?? null,
     checkBodyContains: input.checkBodyContains || null,
+    checkJsonPath: jsonPath,
+    checkMaxAgeSeconds: maxAge,
   };
 }
 

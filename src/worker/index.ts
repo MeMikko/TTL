@@ -136,7 +136,10 @@ export function createWorker(deps: WorkerDeps): Worker {
     await selfHeartbeat();
     if (Date.now() - lastCleanup >= CLEANUP_INTERVAL_MS) {
       lastCleanup = Date.now();
-      const removed = await cleanupExpired(db);
+      const removed = await cleanupExpired(db, new Date(), {
+        historyRetentionMs: config.HISTORY_RETENTION_DAYS * 24 * 3600_000,
+        sandboxDataTtlMs: config.SANDBOX ? config.SANDBOX_DATA_TTL_HOURS * 3600_000 : undefined,
+      });
       if (Object.values(removed).some((n) => n > 0)) logger.info(removed, 'expired rows removed');
     }
   }
