@@ -334,6 +334,7 @@ ${contract}
 
 - Monitor states: new → alive → dead (after ttlSeconds + graceSeconds without a ping) → alive; paused. Alerts: monitor.down, monitor.up, monitor.unpaid.
 - Monitor modes: \`heartbeat\` (default — your agent pushes pings) or \`active\` — we probe your own URL from the outside every \`check.intervalSeconds\`, and a 2xx counts as the ping. Active checks travel the same path a real request does, so a process can't report healthy from inside while its front door is closed. Create with \`{"mode":"active","check":{"url":"https://you/health","intervalSeconds":60},"ttlSeconds":300}\`.
+- Active \`check.expect\` assertions go beyond a 2xx: \`status\` (exact code), \`bodyContains\` (a substring, defeating a hollow 200), and a **freshness** check — \`jsonPath\` (a dotted path like \`data.updatedAt\`) plus \`maxAgeSeconds\`, so a stale-but-correct cached 200 fails when its timestamp is older than the cutoff. Timestamps may be ISO-8601 or unix seconds/ms; the body must be JSON within the first ~4 KB.
 - Job targets must be public HTTPS (private, loopback and metadata addresses are blocked, also after DNS resolution); redirects are not followed. Retries with exponential backoff; history kept 30 days.
 `;
 }

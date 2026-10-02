@@ -1,6 +1,7 @@
 import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '../core/db/index.js';
 import { schema } from '../core/db/index.js';
+import { checkFreshness } from '../core/freshness.js';
 import { recordPing } from '../core/monitors.js';
 import type { HttpClient } from './http-client.js';
 
@@ -65,14 +66,23 @@ export async function probeActiveMonitors(
     // Body assertion defeats a hollow 2xx from a front door that routes but does no real work.
     const bodyOk =
       !m.checkBodyContains || (res.responseSnippet ?? '').includes(m.checkBodyContains);
-    const ok = statusOk && bodyOk;
+    // Freshness assertion defeats a stale-but-correct 200 (e.g. a cached response): the timestamp at
+    // checkJsonPath must be within checkMaxAgeSeconds of the probe.
+    const fresh =
+      m.checkJsonPath && m.checkMaxAgeSeconds != null
+        ? checkFreshness(res.responseSnippet ?? '', m.checkJsonPath, m.checkMaxAgeSeconds, now)
+        : null;
+    const freshOk = !fresh || fresh.ok;
+    const ok = statusOk && bodyOk && freshOk;
     const detail = res.failure
       ? `${res.failure.kind}`
       : !statusOk
         ? `HTTP ${res.status}`
         : !bodyOk
           ? `HTTP ${res.status} but body assertion failed`
-          : `HTTP ${res.status}`;
+          : !freshOk
+            ? `HTTP ${res.status} but ${fresh!.detail}`
+            : `HTTP ${res.status}`;
     // A successful probe is the ping; a failure is left to expire via the normal sweep.
     if (ok) up++;
     else down++;

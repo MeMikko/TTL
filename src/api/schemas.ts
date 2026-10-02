@@ -337,8 +337,26 @@ export const CheckSchema = z
               'front door that routes but does no real work fails the check.',
             example: '"db":"ok"',
           }),
+        jsonPath: z
+          .string()
+          .min(1)
+          .max(256)
+          .nullable()
+          .default(null)
+          .openapi({
+            description:
+              'Dotted JSON path to a timestamp field (e.g. `data.updatedAt`, `items[0].ts`). With ' +
+              'maxAgeSeconds, a stale-but-correct 200 fails: the body must be JSON ≤ ~4 KB and the ' +
+              'field within maxAgeSeconds of the probe. Accepts ISO-8601 or unix seconds/ms.',
+            example: 'data.updatedAt',
+          }),
+        maxAgeSeconds: z.number().int().min(1).max(86_400).nullable().default(null).openapi({
+          description:
+            'Max age of the jsonPath timestamp relative to the probe. Set with jsonPath.',
+          example: 120,
+        }),
       })
-      .default({ status: null, bodyContains: null })
+      .default({ status: null, bodyContains: null, jsonPath: null, maxAgeSeconds: null })
       .openapi({ description: 'Optional response assertions beyond a 2xx.' }),
   })
   .openapi('Check');
@@ -423,6 +441,8 @@ export const MonitorSchema = z
         expect: z.object({
           status: z.number().int().nullable(),
           bodyContains: z.string().nullable(),
+          jsonPath: z.string().nullable(),
+          maxAgeSeconds: z.number().int().nullable(),
         }),
       })
       .nullable()

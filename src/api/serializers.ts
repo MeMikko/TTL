@@ -96,7 +96,12 @@ export function serializeMonitor(m: Monitor, publicBaseUrl: string) {
         ? {
             url: m.checkUrl,
             intervalSeconds: m.checkIntervalSeconds ?? 0,
-            expect: { status: m.checkExpectStatus, bodyContains: m.checkBodyContains },
+            expect: {
+              status: m.checkExpectStatus,
+              bodyContains: m.checkBodyContains,
+              jsonPath: m.checkJsonPath,
+              maxAgeSeconds: m.checkMaxAgeSeconds,
+            },
           }
         : null,
     lastProbe:

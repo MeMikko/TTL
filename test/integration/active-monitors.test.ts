@@ -22,7 +22,11 @@ let probeBody = 'ok';
 let target: Awaited<ReturnType<typeof startTargetServer>>;
 
 const app = buildApp(database, {
-  config: testConfig({ PUBLIC_BASE_URL: 'https://time2live.xyz', WEBHOOK_DEV_ALLOW_LOCAL: 'true' }),
+  config: testConfig({
+    PUBLIC_BASE_URL: 'https://time2live.xyz',
+    WEBHOOK_DEV_ALLOW_LOCAL: 'true',
+    RATE_LIMIT_AUTH_IP_PER_MIN: '1000',
+  }),
 });
 
 beforeAll(async () => {
@@ -67,7 +71,12 @@ const getMonitor = async (key: string, id: string) =>
     check: {
       url: string;
       intervalSeconds: number;
-      expect: { status: number | null; bodyContains: string | null };
+      expect: {
+        status: number | null;
+        bodyContains: string | null;
+        jsonPath: string | null;
+        maxAgeSeconds: number | null;
+      };
     } | null;
     lastProbe: { ok: boolean | null } | null;
   };
@@ -142,6 +151,47 @@ describe('active-check monitors', () => {
     m = await getMonitor(me.apiKey.key, created.id);
     expect(m.status).toBe('alive');
     expect(m.check?.expect).toMatchObject({ bodyContains: '"db":"ok"' });
+  });
+
+  it('a freshness assertion fails a stale-but-correct 200', async () => {
+    const me = await signIn(app);
+    const created = (await (
+      await createActive(me.apiKey.key, {
+        check: {
+          url: target.url('/health'),
+          intervalSeconds: 30,
+          expect: { jsonPath: 'updatedAt', maxAgeSeconds: 120 },
+        },
+      })
+    ).json()) as { id: string };
+
+    const t0 = new Date();
+    // 200 whose timestamp is ~1 h old → stale, not alive.
+    probeBody = JSON.stringify({ updatedAt: new Date(t0.getTime() - 3600_000).toISOString() });
+    const r1 = await probeActiveMonitors(db, client, t0);
+    expect(r1).toMatchObject({ probed: 1, up: 0, down: 1 });
+    let m = await getMonitor(me.apiKey.key, created.id);
+    expect(m.status).not.toBe('alive');
+    expect(m.lastProbe?.ok).toBe(false);
+
+    // A fresh timestamp → healthy.
+    probeBody = JSON.stringify({ updatedAt: new Date(t0.getTime() + 31_000).toISOString() });
+    const r2 = await probeActiveMonitors(db, client, new Date(t0.getTime() + 31_000));
+    expect(r2).toMatchObject({ probed: 1, up: 1 });
+    m = await getMonitor(me.apiKey.key, created.id);
+    expect(m.status).toBe('alive');
+    expect(m.check?.expect).toMatchObject({ jsonPath: 'updatedAt', maxAgeSeconds: 120 });
+  });
+
+  it('rejects jsonPath without maxAgeSeconds (freshness fields go together)', async () => {
+    const me = await signIn(app);
+    expect(
+      (
+        await createActive(me.apiKey.key, {
+          check: { url: target.url('/h'), intervalSeconds: 30, expect: { jsonPath: 'ts' } },
+        })
+      ).status,
+    ).toBe(400);
   });
 
   it('rejects an active monitor without a check, and a check without active mode', async () => {

@@ -93,6 +93,8 @@ export interface MonitorReceiptInput {
     lastProbeDetail: string | null;
     checkExpectStatus: number | null;
     checkBodyContains: string | null;
+    checkJsonPath: string | null;
+    checkMaxAgeSeconds: number | null;
   };
   lastEvent: { toStatus: string; reason: string; at: Date } | null;
   ownerAddress: string;
@@ -222,6 +224,10 @@ export function buildMonitorReceipt(input: MonitorReceiptInput) {
             expect: {
               status: m.checkExpectStatus,
               bodyContains: m.checkBodyContains,
+              // Freshness: the timestamp at this path must be within maxAgeSeconds of the probe, so a
+              // stale-but-correct 200 fails rather than reading green.
+              jsonPath: m.checkJsonPath,
+              maxAgeSeconds: m.checkMaxAgeSeconds,
             },
             lastProbeAt: m.lastProbeAt ? m.lastProbeAt.toISOString() : null,
             lastProbeOk: m.lastProbeOk,
