@@ -82,6 +82,20 @@ describe('liveness receipts', () => {
       by: null,
     });
 
+    // Custody: while alive, who may act and on what proof. Heartbeat is a ping-URL holder's, pause is
+    // the operator's, escalation is automatic on a miss.
+    const alive = body.receipt.nextAllowedAction as Array<{
+      action: string;
+      who: string;
+      evidence: string;
+    }>;
+    expect(alive.find((a) => a.action === 'heartbeat')).toMatchObject({ who: 'ping_holder' });
+    expect(alive.find((a) => a.action === 'pause')).toMatchObject({
+      who: 'operator',
+      evidence: expect.stringContaining(body.receipt.operator as string),
+    });
+    expect(alive.find((a) => a.action === 'escalate')).toMatchObject({ who: 'automatic' });
+
     // The signature verifies with the receipt's own key…
     expect(verifyReceipt(body.receipt, body.signature)).toBe(true);
     // …which matches the published key.
@@ -109,6 +123,21 @@ describe('liveness receipts', () => {
     // operator_ack_by names who halted it (the account wallet, lowercased).
     expect(ack.by).toBe(body.receipt.operator);
     expect(typeof ack.by).toBe('string');
+
+    // Custody: a halted monitor is the operator's to resume — holding the ping URL does not un-halt
+    // it, so the only allowed action names the operator and their credential.
+    const halted = body.receipt.nextAllowedAction as Array<{
+      action: string;
+      who: string;
+      evidence: string;
+    }>;
+    expect(halted).toEqual([
+      {
+        action: 'resume',
+        who: 'operator',
+        evidence: expect.stringContaining(body.receipt.operator as string),
+      },
+    ]);
     expect(verifyReceipt(body.receipt, body.signature)).toBe(true);
   });
 

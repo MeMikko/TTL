@@ -112,6 +112,79 @@ function livenessOf(status: string): MonitorLiveness {
   return 'new';
 }
 
+export interface AllowedAction {
+  /** What may be done to the monitor from its current liveness. */
+  action: 'heartbeat' | 'resume' | 'pause' | 'escalate';
+  /**
+   * Who is entitled to do it: `operator` (the account that owns it), `ping_holder` (anyone holding
+   * the secret ping URL), or `automatic` (the service itself, no caller).
+   */
+  who: 'operator' | 'ping_holder' | 'automatic';
+  /** The proof that entitles that actor — the custody rule, not just the fact of decay. */
+  evidence: string;
+}
+
+/**
+ * The custody half of the receipt: from the current liveness, who may act and what proof they need.
+ * A receipt that only reports decay proves a monitor went quiet but not who is allowed to restart,
+ * pause or escalate it. The distinctions are real, not cosmetic:
+ *  - A `halted_by_operator` (paused) monitor can be restarted ONLY by the operator; a ping records
+ *    the time but does not un-halt it (see recordPing). Possession of the ping URL is not enough.
+ *  - A `missed_window` (dead) monitor re-arms on the next heartbeat — a ping to the secret URL, or,
+ *    in active mode, a passing probe — no operator credential required.
+ *  - Escalation is never a caller action: it fires automatically on a miss to the stopAction
+ *    channels.
+ */
+function nextAllowedActionsOf(
+  liveness: MonitorLiveness,
+  mode: string,
+  ownerAddress: string,
+): AllowedAction[] {
+  const operatorEvidence = `operator session token or API key bound to ${ownerAddress}`;
+  // How the "I am alive" signal is produced, and who may produce it.
+  const keepAlive: AllowedAction =
+    mode === 'active'
+      ? {
+          action: 'heartbeat',
+          who: 'automatic',
+          evidence: 'the worker probes check.url each interval; no caller action and no credential',
+        }
+      : {
+          action: 'heartbeat',
+          who: 'ping_holder',
+          evidence: 'possession of the secret ping URL (the monitor id); no API key',
+        };
+
+  switch (liveness) {
+    case 'new':
+      return [keepAlive, { action: 'pause', who: 'operator', evidence: operatorEvidence }];
+    case 'alive':
+      return [
+        keepAlive,
+        { action: 'pause', who: 'operator', evidence: operatorEvidence },
+        {
+          action: 'escalate',
+          who: 'automatic',
+          evidence: 'fires on a missed window to the stopAction.onMiss channels; no caller action',
+        },
+      ];
+    case 'missed_window':
+      return [
+        // Re-arming after a miss uses the same alive signal — no operator credential needed.
+        { ...keepAlive, action: 'resume' },
+        {
+          action: 'escalate',
+          who: 'automatic',
+          evidence: 'already fired on the missed window to the stopAction.onMiss channels',
+        },
+      ];
+    case 'halted_by_operator':
+      // The custody line: a paused monitor is restarted ONLY by the operator. A ping records the
+      // time but does not reactivate it, so holding the ping URL is not enough to un-halt.
+      return [{ action: 'resume', who: 'operator', evidence: operatorEvidence }];
+  }
+}
+
 /** Builds the receipt body (the object that gets signed). */
 export function buildMonitorReceipt(input: MonitorReceiptInput) {
   const m = input.monitor;
@@ -193,6 +266,9 @@ export function buildMonitorReceipt(input: MonitorReceiptInput) {
         : null,
       deadSince: m.deadSince ? m.deadSince.toISOString() : null,
     },
+    // Custody, not just decay: from this liveness, who may restart/pause/escalate and what proof they
+    // need. Notably a halted (paused) monitor is the operator's to resume — a ping won't un-halt it.
+    nextAllowedAction: nextAllowedActionsOf(liveness, m.mode, input.ownerAddress),
     // Self-describing: anyone can re-fetch a fresh receipt here and compare, so a stale "alive" can't
     // be passed off as current.
     replayUrl: `${input.base.replace(/\/$/, '')}/v1/monitors/${m.id}/receipt`,
