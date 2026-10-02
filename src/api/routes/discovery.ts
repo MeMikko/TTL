@@ -295,6 +295,7 @@ Base URL: ${base}. JSON over HTTPS; errors are \`{"error":{"code","message"}}\`.
 ## Liveness receipts
 
 - \`GET /v1/monitors/{id}/receipt\` returns a **server-signed (Ed25519) liveness receipt**: a portable attestation an agent can hand to a third party to *prove* its state rather than pointing at a dashboard. It records the schedule id, last heartbeat + success hash, the missed-window rule, the stop/alert action, and — crucially — distinguishes \`halted_by_operator\` (paused on purpose) from \`missed_window\` (went silent).
+- It also carries **custody, not just decay**: \`nextAllowedAction\` lists, for the current liveness, who may restart/pause/escalate and the proof they need. A \`halted_by_operator\` monitor is the operator's to resume (a ping records the time but does not un-halt it); a \`missed_window\` one re-arms on the next heartbeat (the secret ping URL, or a passing active probe); escalation is always automatic on a miss to the stopAction channels.
 - Verify offline: Ed25519 over the canonical JSON of \`receipt\` (object keys sorted recursively, no whitespace), against the public key at [\`/.well-known/time2live-receipts.json\`](${base}/.well-known/time2live-receipts.json).
 
 ## MCP
