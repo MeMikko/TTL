@@ -71,6 +71,13 @@
       "when": 1790875180641,
       "tag": "0009_active_check_expect",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790942293029,
+      "tag": "0010_job_freshness_seconds",
+      "breakpoints": true
     }
   ]
 }

@@ -171,6 +171,18 @@ export const CreateJobSchema = z
     target: TargetSchema,
     timeoutMs: z.number().int().min(1000).max(30_000).default(10_000),
     maxAttempts: z.number().int().min(1).max(10).default(5),
+    freshnessSeconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(31_536_000)
+      .nullish()
+      .openapi({
+        description:
+          'Freshness cutoff. A scheduled occurrence that would fire more than this many seconds ' +
+          'after its slot (e.g. a catch-up after downtime) is recorded `skipped` instead of ' +
+          'delivered. Omit or null to deliver regardless of lateness.',
+      }),
   })
   .openapi('CreateJob');
 
@@ -188,6 +200,7 @@ export const UpdateJobSchema = z
       .partial(),
     timeoutMs: z.number().int().min(1000).max(30_000),
     maxAttempts: z.number().int().min(1).max(10),
+    freshnessSeconds: z.number().int().min(60).max(31_536_000).nullable(),
   })
   .partial()
   .openapi('UpdateJob');
@@ -212,6 +225,7 @@ export const JobSchema = z
     }),
     timeoutMs: z.number().int(),
     maxAttempts: z.number().int(),
+    freshnessSeconds: z.number().int().nullable(),
     nextRunAt: z.iso.datetime().nullable(),
     lastRunAt: z.iso.datetime().nullable(),
     lastRunStatus: z.string().nullable(),

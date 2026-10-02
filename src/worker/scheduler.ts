@@ -19,6 +19,7 @@ interface DueJob {
   timezone: string;
   next_run_at: Date;
   max_attempts: number;
+  freshness_seconds: number | null;
   account_status: 'active' | 'frozen';
   activated_at: Date | null;
 }
@@ -38,7 +39,7 @@ export async function scheduleDueJobs(
   return db.transaction(async (tx) => {
     const due = await tx.execute<DueJob & Record<string, unknown>>(sql`
       select j.id, j.account_id, j.schedule_kind, j.cron_expr, j.timezone, j.next_run_at,
-             j.max_attempts, a.status as account_status, a.activated_at
+             j.max_attempts, j.freshness_seconds, a.status as account_status, a.activated_at
       from jobs j join accounts a on a.id = j.account_id
       where j.status = 'active' and j.next_run_at <= ${now}
       order by j.next_run_at
@@ -50,8 +51,33 @@ export async function scheduleDueJobs(
     for (const job of due.rows) {
       const scheduledFor = new Date(job.next_run_at);
 
+      // Freshness cutoff: a slot that would fire too long after its scheduled time (a catch-up
+      // after downtime) is recorded as skipped rather than delivered late. Normal runs are at most
+      // a poll interval behind, so only genuinely stale occurrences trip this.
+      const lateBySeconds = Math.round((now.getTime() - scheduledFor.getTime()) / 1000);
+      const stale = job.freshness_seconds != null && lateBySeconds > job.freshness_seconds;
+
       // Frozen accounts: advance the schedule silently, no runs and no quota use.
-      if (job.account_status === 'active') {
+      if (job.account_status === 'active' && stale) {
+        // Materialise as skipped (no delivery, no charge) so the stale slot is auditable.
+        await tx
+          .insert(schema.jobRuns)
+          .values({
+            id: newId('run'),
+            jobId: job.id,
+            accountId: job.account_id,
+            trigger: 'schedule',
+            scheduledFor,
+            status: 'skipped',
+            maxAttempts: job.max_attempts,
+            nextAttemptAt: null,
+            finishedAt: now,
+            lastError: `stale: scheduled ${lateBySeconds}s ago, beyond freshnessSeconds=${job.freshness_seconds}`,
+            createdAt: now,
+          })
+          .onConflictDoNothing();
+        skipped++;
+      } else if (job.account_status === 'active') {
         // Insert first, pay second: an occurrence that already exists is never charged twice.
         const runId = newId('run');
         const inserted = await tx

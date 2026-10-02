@@ -133,6 +133,12 @@ export const jobs = pgTable(
     body: text('body'),
     timeoutMs: integer('timeout_ms').notNull(),
     maxAttempts: integer('max_attempts').notNull(),
+    /**
+     * Optional freshness cutoff (seconds). When a scheduled occurrence would materialise more than
+     * this many seconds after its slot — e.g. the single catch-up run after downtime — it is
+     * recorded `skipped` instead of delivered, so a stale slot never fires late. Null = no cutoff.
+     */
+    freshnessSeconds: integer('freshness_seconds'),
     lastRunAt: ts('last_run_at'),
     lastRunStatus: text('last_run_status'),
     createdAt: ts('created_at').notNull().defaultNow(),
