@@ -5,11 +5,14 @@ and reason about the contracts is here or linked from here.
 
 ## 1. Overview
 
-`DeadMansSwitch` is a non-custodial, on-chain dead man's switch for autonomous agents on Base. Each
-switch holds ETH and up to 20 ERC-20 tokens. The agent (or owner) must `ping()` at least every `ttl`
-seconds; if pings stop, **anyone** may call `trigger()` after the deadline and every asset moves to a
-fixed `beneficiary`. There is no admin, no upgradeability, and no privileged keeper — triggering is
-permissionless. A convenience keeper (off-chain) only calls the same public `trigger()`.
+`DeadMansSwitch` is an on-chain dead man's switch for autonomous agents on Base. Each switch contract
+custodies its own ETH and up to 20 ERC-20 tokens; the protocol has no admin and no withdrawal right
+over them. The agent (or owner) must `ping()` at least every `ttl` seconds; if pings stop, **anyone**
+may call `trigger()` after the deadline and every asset moves to the `beneficiary` — or the
+beneficiary's own redirect, less an optional trigger reward to the caller (see §5). The owner may
+change the beneficiary while the switch is live; once the deadline passes it is locked, and the owner
+can never redirect the beneficiary's payout. There is no upgradeability and no privileged keeper —
+triggering is permissionless. A convenience keeper (off-chain) only calls the same public `trigger()`.
 
 | Contract                | Role                                                                                                                                                       |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -18,19 +21,22 @@ permissionless. A convenience keeper (off-chain) only calls the same public `tri
 
 ## 2. Scope
 
-|                  |                                                                                                       |
-| ---------------- | ----------------------------------------------------------------------------------------------------- |
-| **Commit**       | `f5f5682edaee6e8178b859fb459addc2664bdcad` (branch `main`)                                            |
-| **In scope**     | `contracts/src/DeadMansSwitch.sol` (440 LOC), `contracts/src/DeadMansSwitchFactory.sol` (93 LOC)      |
-| **Script**       | `contracts/script/Deploy.s.sol` (deployment only, review for correctness, not security-critical)      |
-| **Out of scope** | Off-chain keeper (`src/worker/keeper.ts`), the API/MCP service, test mocks, OpenZeppelin library code |
-| **SLOC**         | ~533 source lines, 2 files, no external calls except token transfers and ETH sends                    |
+|                  |                                                                                                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Repo**         | `https://github.com/MeMikko/TTL`                                                                                                                                                             |
+| **Commit / tag** | `f5f5682edaee6e8178b859fb459addc2664bdcad` on `main`, tag `audit-v1` (contract source is identical from this commit through `main` HEAD, and matches the verified mainnet bytecode — see §9) |
+| **In scope**     | `contracts/src/DeadMansSwitch.sol` (440 LOC), `contracts/src/DeadMansSwitchFactory.sol` (93 LOC)                                                                                             |
+| **Script**       | `contracts/script/Deploy.s.sol` (deployment only, review for correctness, not security-critical)                                                                                             |
+| **Out of scope** | Off-chain keeper (`src/worker/keeper.ts`), the API/MCP service, test mocks, OpenZeppelin library code                                                                                        |
+| **SLOC**         | ~533 source lines, 2 files, no external calls except token transfers and ETH sends                                                                                                           |
 
 ## 3. Build & test
 
 Dependencies are git submodules (OpenZeppelin Contracts **v5.7.0**, forge-std). Foundry required.
 
 ```sh
+git clone https://github.com/MeMikko/TTL && cd TTL
+git checkout audit-v1            # = commit f5f5682…
 git submodule update --init --recursive
 cd contracts
 forge build                      # Solc 0.8.30, EVM cancun, optimizer 10_000 runs
@@ -79,7 +85,9 @@ ETH balance, set by the owner at creation). The owner can never redirect the ben
 
 Random sequences of every action by owner, agent, a stranger and the beneficiary must preserve:
 
-1. Funds only ever reach the owner or the beneficiary; all ETH is accounted for.
+1. Funds only ever reach the owner (`withdraw` / cancel), the beneficiary or its beneficiary-set
+   redirect (`trigger` / `sweep`), or the opt-in trigger-reward caller; all ETH is accounted for
+   across exactly these.
 2. `trigger()` never succeeds at or before the deadline.
 3. Expiry is final: no `ping`/`setTtl` revives an expired switch, and the owner receives nothing
    after expiry.
@@ -121,15 +129,45 @@ A thorough internal review (not a substitute for this engagement) found and reso
    the guarded `_balanceOf` static call.
 6. **ReentrancyGuardTransient** (EIP-1153) correctness across clones.
 
+### Implementation notes (so these aren't chased as missing/broken)
+
+- **`initialize` is not factory-gated** — any address can call it on a fresh clone. The guarantee is
+  that the factory creates the clone and calls `initialize` in the **same transaction**, and the
+  implementation locks itself in its constructor (`_initialized = true`). We call this out so the
+  bare "unprotected initializer" pattern isn't reported without that context — the front-running /
+  re-initialization question (§8.4) is exactly what we want pressure-tested.
+- **`trySafeTransfer` is from OpenZeppelin v5.7.0**, not our code — not a missing function.
+- **`receive()` is deliberately not `nonReentrant`;** the reward send and the beneficiary transfer in
+  `trigger` / `sweep` are guarded. Please review the case where a switch's payout address is the
+  switch itself (ETH re-entering `receive()` mid-trigger).
+- **Gas-grief (L1) is accepted because the off-chain keeper caps gas** at `KEEPER_MAX_GAS` (default
+  **1,500,000**). The keeper is out of scope, but this is the bound that makes L1 tolerable — without
+  it L1 is unmitigated.
+- **`DeadMansSwitchFactory.createSwitch` pushes to `_ownerSwitches` / `_allSwitches` before calling
+  `initialize`, and is not `nonReentrant`.** Small surface (its only external call is to the clone it
+  just created), but worth a look.
+
 ## 9. Deployment
 
-- The factory is deployed through the canonical CREATE2 deployer with a fixed salt, so its address is
-  deterministic across chains (Base Sepolia `84532`, Base mainnet `8453`). The implementation is
-  deployed by the factory's constructor.
-- **Note:** a testnet factory from an earlier bytecode is live at
-  `0x3D7cE7C30b712bC070Ba1ea2918Bd2211AD4349A` (Base Sepolia), verified on Basescan + Sourcify. It
-  predates the H/M1/L fixes above — **the audit target is the source at the commit in §2**, which
-  will be redeployed to a new address after this review. Do not audit the deployed testnet bytecode.
+- **The audit target is the live mainnet code.** The source at the commit/tag in §2 is deployed on
+  **Base mainnet (chainId 8453)** and verified on Basescan:
+  - Factory `DeadMansSwitchFactory` — `0x3D7cE7C30b712bC070Ba1ea2918Bd2211AD4349A`
+  - Implementation `DeadMansSwitch` (behind the EIP-1167 clones, deployed by the factory's
+    constructor) — `0x28b32e2d9d3Fe80bDC7a4033DA8449639F372ED4`
+
+  This is the factory the public product (`time2live.xyz`, `llms.txt`) points to. We confirmed
+  on-chain that the implementation's deployed bytecode contains the H/M1 fixes — the
+  `setPayoutAddress(address)` selector `0x33ea51a8` and the `cancelled()` selector `0x9a82a09a` — i.e.
+  it is the §2 source, not an earlier build.
+
+- **To bind source → bytecode:** clone the repo, `git checkout audit-v1` (= commit `f5f5682…`), build
+  with the pinned settings in §3, and diff the artifact against the verified mainnet bytecode (or read
+  the verified source directly on Basescan).
+- Clone (per-switch) addresses are CREATE2-deterministic per `(owner, salt)` via
+  `Clones.cloneDeterministic`.
+- **Testnet caveat:** a factory at the _same address_ on **Base Sepolia (84532)** is an earlier
+  bytecode that predates the H/M1/L fixes. It is testnet-only and **not** the audit target — do not
+  audit the Sepolia bytecode.
 - Deploy script: `contracts/script/Deploy.s.sol`. Operational detail in `docs/OPERATIONS.md`.
 
 ## 10. Slither
@@ -139,9 +177,11 @@ design and reviewed: `timestamp`, `low-level-calls`, `calls-loop`, `costly-loop`
 `arbitrary-send-eth` (every ETH send goes to owner / beneficiary / redirect / opt-in reward caller).
 Rationale is documented in `contracts/README.md`.
 
-## 11. Logistics (fill in before sending)
+## 11. Logistics
 
-- **Primary contact:** `<name / email>`
-- **Preferred report format / disclosure window:** `<…>`
-- **Fix-review round included?** `<yes/no>`
-- **Post-audit bug bounty** (Immunefi / Hats) planned: `<yes/no>`
+- **Primary contact:** Mikko — mikkoparoll87@gmail.com (time2live.xyz)
+- **Preferred report format / disclosure window:** Markdown report; 90-day coordinated disclosure, a
+  public write-up permitted once fixes ship.
+- **Fix-review round included?** Yes — one round to verify remediations.
+- **Post-audit bug bounty** (Immunefi / Hats) planned: Yes, scoped to the on-chain contracts after the
+  audit lands.
