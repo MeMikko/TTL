@@ -285,3 +285,10 @@ using API keys.
 
 `GET /healthz` checks the process only; `GET /healthz?deep=1` also checks Postgres and that a
 worker ticked within `HEALTH_MAX_TICK_AGE_MS` (503 otherwise) — point external uptime checks there.
+
+## License
+
+Copyright © 2026 time2live.xyz. Licensed under the **GNU Affero General Public License v3.0**
+([AGPL-3.0-only](LICENSE)). You may use, modify and self-host it; if you run a modified version as a
+network service, you must make your source available to its users (AGPL §13). For a commercial
+license without the AGPL obligations, contact the maintainer.
