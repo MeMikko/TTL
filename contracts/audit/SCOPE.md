@@ -128,6 +128,13 @@ A thorough internal review (not a substitute for this engagement) found and reso
 5. **Fee-on-transfer / rebasing / broken tokens**: balance-diff accounting, `trySafeTransfer`, and
    the guarded `_balanceOf` static call.
 6. **ReentrancyGuardTransient** (EIP-1153) correctness across clones.
+7. **Beneficiary change vs. the countdown.** `setBeneficiary` currently does **not** reset
+   `lastPing`, so an owner can swap the beneficiary moments before the deadline and let `trigger`
+   send to the new address. We judge this benign because a live owner can already `withdraw` the
+   full balance to themselves (`withdraw` is the transfer primitive by design; the switch guards
+   against the owner going dark, not a live malicious owner), and every change emits
+   `BeneficiaryChanged`. Question for review: does any threat model make resetting the countdown on a
+   beneficiary change worthwhile (defense-in-depth), or does it only add a footgun given `withdraw`?
 
 ### Implementation notes (so these aren't chased as missing/broken)
 
